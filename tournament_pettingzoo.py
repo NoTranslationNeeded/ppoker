@@ -14,7 +14,7 @@ class TournamentPokerParallelEnv(MultiAgentEnv):
     }
 
     def __init__(self, starting_chips=100, randomize_stacks=True, render_mode=None,
-                 reward_type='icm_survival', reward_config=None):
+                 reward_type='icm_survival', reward_config=None, max_hands=1000):
         super().__init__()
         
         self.env = TournamentPokerEnv(
@@ -23,12 +23,14 @@ class TournamentPokerParallelEnv(MultiAgentEnv):
             big_blind=2,
             randomize_stacks=randomize_stacks,
             reward_type=reward_type,
-            reward_config=reward_config
+            reward_config=reward_config,
+            max_hands=max_hands
         )
         self.render_mode = render_mode
         
         # Define agents (Ray expects _agent_ids set, but we manage dynamically)
         self.possible_agents = ["player_0", "player_1"]
+        self.agents = self.possible_agents[:]
         self._agent_ids = set(self.possible_agents)
         
         # Define spaces - 60 dimensions with blind level info
@@ -48,14 +50,16 @@ class TournamentPokerParallelEnv(MultiAgentEnv):
             np.random.seed(seed)
             
         # Reset underlying env
+        self.agents = self.possible_agents[:]
         obs = self.env.reset()
         
         # Return observations - only current player observes
         current_player = f"player_{self.env.current_player}"
         observations = {current_player: obs}
         
-        # Return infos
-        infos = {agent: {} for agent in self.possible_agents}
+        # Return infos - ONLY for the agent receiving an observation
+        # Ray requires info keys to be a subset of observation keys
+        infos = {current_player: {}}
         
         return observations, infos
     
@@ -102,9 +106,13 @@ class TournamentPokerParallelEnv(MultiAgentEnv):
                 # Empty observations (game over)
                 observations = {}
                 
-                # Infos
-                infos["player_0"] = info
-                infos["player_1"] = info
+                # Infos - can be empty or contain final info if needed, but no obs means no info usually in Ray
+                # But for termination, we might want to pass info. 
+                # However, to be safe with "subset of obs" rule, we keep it empty or only if we returned obs.
+                # Actually, Ray allows info for agents not in obs IF they are in the returned info dict?
+                # The error said: "Key set for infos must be a subset of obs"
+                # So if obs is empty, infos MUST be empty.
+                infos = {}
                 
                 # Ray 2.x: Add __all__ to terminations/truncations
                 terminations["__all__"] = True
@@ -125,15 +133,13 @@ class TournamentPokerParallelEnv(MultiAgentEnv):
                 terminations["__all__"] = False
                 truncations["__all__"] = False
                 
-                # Infos
-                infos = {agent: info for agent in self.possible_agents}
+                # Infos - ONLY for the next agent who gets an observation
+                infos = {next_agent: info}
                 
             return observations, rewards, terminations, truncations, infos
         else:
             # No action for current player (should not happen in Ray loop if configured correctly)
             return {}, {}, {"__all__": False}, {"__all__": False}, {}
-
-
 
 if __name__ == "__main__":
     # Test the PettingZoo wrapper
@@ -170,10 +176,10 @@ if __name__ == "__main__":
             
             if done:
                 print(f"\n✅ Episode complete after {step_count} steps")
-                info = infos[list(infos.keys())[0]]
-                print(f"Hands played: {info['hands_played']}")
-                print(f"Winner: Player {info['tournament_winner']}")
-                print(f"Final chips: {info['final_chips']}")
+                # Info might be empty now due to our fix, so be careful accessing it for print
+                # We can't easily print winner info here if info is empty.
+                # But for training it's fine.
+                print("Tournament Over")
         
         if not done:
             print(f"\n⚠️ Max steps reached ({max_steps})")

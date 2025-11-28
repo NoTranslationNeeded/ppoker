@@ -17,7 +17,7 @@ class TournamentPokerEnv:
     """
     
     def __init__(self, starting_chips=100, small_blind=1, big_blind=2, randomize_stacks=True, 
-                 reward_type='icm_survival', reward_config=None):
+                 reward_type='icm_survival', reward_config=None, max_hands=1000):
         # Lazy import ompeval here to ensure it's loaded in the worker process
         global ompeval
         import ompeval
@@ -26,6 +26,7 @@ class TournamentPokerEnv:
         self.base_small_blind = small_blind
         self.base_big_blind = big_blind
         self.randomize_stacks = randomize_stacks
+        self.max_hands = max_hands
         
         # Initialize ompeval EquityCalculator once
         self.equity_calc = ompeval.EquityCalculator()
@@ -170,8 +171,16 @@ class TournamentPokerEnv:
             self.chips[1] += payoffs[1]
             
             # Check if tournament is over
-            if self.chips[0] <= 0 or self.chips[1] <= 0:
+            if self.chips[0] <= 0 or self.chips[1] <= 0 or self.hand_count >= self.max_hands:
                 self.tournament_over = True
+                
+                # Determine winner (chip count tie-breaker for max_hands limit)
+                if self.chips[0] > self.chips[1]:
+                    winner = 0
+                elif self.chips[1] > self.chips[0]:
+                    winner = 1
+                else:
+                    winner = -1 # Tie
                 
                 # Pure Dense Reward: BB-normalized chip change
                 # Formula: (chip_payoff / BB) / 250.0 (already properly normalized to ~[-1, 1])
@@ -181,7 +190,7 @@ class TournamentPokerEnv:
                 obs = np.zeros(self.observation_space_size, dtype=np.float32)
                 done = True
                 info = {
-                    'tournament_winner': 0 if self.chips[0] > 0 else 1,
+                    'tournament_winner': winner,
                     'hands_played': self.hand_count,
                     'final_chips': self.chips.copy(),
                     'starting_chips': self.starting_chips.copy()

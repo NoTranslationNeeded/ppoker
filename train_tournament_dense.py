@@ -28,7 +28,8 @@ def env_creator(config):
     """
     env = TournamentPokerParallelEnv(
         starting_chips=100,
-        randomize_stacks=True
+        randomize_stacks=True,
+        max_hands=config.get("max_hands", 1000)
     )
     return env
 
@@ -38,7 +39,7 @@ register_env("tournament_poker_dense", env_creator)
 
 def train_tournament_dense():
     # Initialize Ray
-    ray.init(ignore_reinit_error=True)
+    ray.init(ignore_reinit_error=True, include_dashboard=False)
     
     # Define spaces - 60 dimensions with blind level
     obs_space = spaces.Box(low=0, high=1, shape=(60,), dtype=np.float32)
@@ -53,10 +54,18 @@ def train_tournament_dense():
         PPOConfig()
         .environment(
             env="tournament_poker_dense",
+            env_config={
+                "max_hands": 200,
+            },
             # Environment config is clean now
         )
+        .framework("torch")
         .resources(
-            num_gpus=1, 
+            num_gpus=0, 
+        )
+        .learners(
+            num_learners=0,
+            num_gpus_per_learner=0
         )
         .training(
             model={
@@ -75,15 +84,15 @@ def train_tournament_dense():
             lambda_=0.95,              # GAE lambda for advantage estimation
             clip_param=0.2,            # PPO clip range (conservative for Dense Reward)
             lr=0.0003,
-            train_batch_size=2000,     # Reduced from 4000 to prevent OOM
+            train_batch_size=1024,     # Reduced for faster iterations (was 2000)
             # sgd_minibatch_size=256,  # Removed due to TypeError in Ray 2.52
             num_sgd_iter=10,
             entropy_coeff=0.02,        # Increased exploration for 7-action space (was 0.01)
         )
         .env_runners(
             num_env_runners=0,     # 0 for local worker (debugging serialization issues)
-            rollout_fragment_length=1000, # Reduced from 4000 to prevent OOM
-            batch_mode="complete_episodes", # Wait for full episodes
+            rollout_fragment_length=512, # Reduced for faster iterations (was 1000)
+            batch_mode="truncate_episodes", # Changed from complete_episodes for faster iterations
         )
         .multi_agent(
             policies={
@@ -96,6 +105,7 @@ def train_tournament_dense():
         # Removed TournamentLoggingCallback - causes 9+ second overhead per iteration
         # .callbacks(TournamentLoggingCallback)
         .experimental(_validate_config=False)
+        .api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
     )
     
     # Training configuration
@@ -133,7 +143,7 @@ def train_tournament_dense():
     # Run training
     results = tune.run(
         "PPO",
-        name="beta",  # New model name requested by user
+        name="gamma",  # New model name requested by user
         config=config.to_dict(),
         stop=stop,
         checkpoint_freq=10,
