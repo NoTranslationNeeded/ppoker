@@ -205,7 +205,7 @@ class TournamentLoggingCallback(DefaultCallbacks):
             # Check for blind level increase
             if blind_level != prev_blind_level and prev_blind_level != -1:
                 game_logger.info("─" * 80)
-                game_logger.info(f"⚠️  BLIND LEVEL INCREASED TO {blind_str}")
+                game_logger.info(f"[!] BLIND LEVEL INCREASED TO {blind_str}")
                 game_logger.info("─" * 80)
             prev_blind_level = blind_level
             
@@ -263,16 +263,16 @@ class TournamentLoggingCallback(DefaultCallbacks):
         
         # Also print brief console summary
         print(f"\n{'='*80}")
-        print(f"🎯 ITERATION {iteration_num} - Tournament Logged (Episode {episode_num})")
+        print(f">>> ITERATION {iteration_num} - Tournament Logged (Episode {episode_num})")
         print(f"{'='*80}")
         if final_info:
             winner = final_info.get("tournament_winner", 0)
             hands_played = final_info.get("hands_played", 0)
             final_chips = final_info.get("final_chips", [0, 0])
-            print(f"  ✓ {hands_played} hands played")
-            print(f"  ✓ Winner: Player {winner}")
-            print(f"  ✓ Final chips: P0={final_chips[0]:.1f}, P1={final_chips[1]:.1f}")
-            print(f"  ✓ Detailed log written to: poker_games.log")
+            print(f"  * {hands_played} hands played")
+            print(f"  * Winner: Player {winner}")
+            print(f"  * Final chips: P0={final_chips[0]:.1f}, P1={final_chips[1]:.1f}")
+            print(f"  * Detailed log written to: poker_games.log")
         print(f"{'='*80}\n")
     
     def on_train_result(
@@ -289,7 +289,7 @@ class TournamentLoggingCallback(DefaultCallbacks):
         # Print detailed log for first tournament of this iteration
         if self.pending_log is not None:
             print(f"\n{'='*100}")
-            print(f"🎯 ITERATION {iteration} - First Tournament (Episode {self.pending_log['episode_number']})")
+            print(f">>> ITERATION {iteration} - First Tournament (Episode {self.pending_log['episode_number']})")
             print(f"{'='*100}")
             self._print_detailed_tournament_log(
                 self.pending_log['episode'],
@@ -301,7 +301,7 @@ class TournamentLoggingCallback(DefaultCallbacks):
         
         # Print iteration summary
         print(f"\n{'='*100}")
-        print(f"📊 Training Iteration {iteration} Summary")
+        print(f"--- Training Iteration {iteration} Summary")
         print(f"{'='*100}")
         print(f"Episodes this iteration: {result.get('episodes_this_iter', 0)}")
         print(f"Mean reward: {result.get('episode_reward_mean', 0):.2f}")

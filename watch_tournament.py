@@ -43,7 +43,7 @@ def watch_tournament(checkpoint_path=None, num_games=3):
                 policy = algo.get_policy("player_0")
                 print(f"  Loaded algorithm from: {checkpoint_path}\n")
         except Exception as e:
-            print(f"❌ Error loading checkpoint: {e}")
+            print(f"[ERROR] Error loading checkpoint: {e}")
             print("  Make sure Ray versions match and path is correct.")
             return
     else:

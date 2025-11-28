@@ -17,7 +17,6 @@ import numpy as np
 # Import our custom environment and model
 from tournament_pettingzoo import TournamentPokerParallelEnv
 from transformer_model import TransformerPokerModel
-from reward_functions import REWARD_CONFIGS
 from tournament_logger import TournamentLoggingCallback
 
 # Register custom Transformer model
@@ -25,24 +24,19 @@ ModelCatalog.register_custom_model("transformer_poker", TransformerPokerModel)
 
 def env_creator(config):
     """
-    Create tournament poker environment with ICM + Survival rewards
+    Create tournament poker environment with Pure Dense rewards
     """
-    reward_type = config.get('reward_type', 'icm_survival')
-    reward_config = config.get('reward_config', REWARD_CONFIGS['balanced'])
-    
     env = TournamentPokerParallelEnv(
         starting_chips=100,
-        randomize_stacks=True,
-        reward_type=reward_type,
-        reward_config=reward_config
+        randomize_stacks=True
     )
     return env
 
 # Register environment
-register_env("tournament_poker_icm", lambda config: ParallelPettingZooEnv(env_creator(config)))
+register_env("tournament_poker_dense", lambda config: ParallelPettingZooEnv(env_creator(config)))
 
 
-def train_tournament_icm():
+def train_tournament_dense():
     # Initialize Ray
     ray.init(ignore_reinit_error=True)
     
@@ -58,11 +52,8 @@ def train_tournament_icm():
     config = (
         PPOConfig()
         .environment(
-            "tournament_poker_icm",
-            env_config={
-                'reward_type': 'icm_survival',
-                'reward_config': REWARD_CONFIGS['balanced']
-            }
+            "tournament_poker_dense",
+            env_config={}
         )
         .framework("torch")
         .env_runners(num_env_runners=4)  # 4 runners for faster data collection
@@ -121,13 +112,15 @@ def train_tournament_icm():
     print("   Range: -1.0 to +1.0 (normalized)")
     print("")
     print("Why Pure Dense Reward:")
-    print("   ✓ Immediate feedback for every decision")
-    print("   ✓ Chip EV maximization = optimal poker")
-    print("   ✓ No artificial incentives")
-    print("   ✓ Consistent with pro poker strategy")
-    print("   ✓ Simple, clear learning signal")
+    print("   * Immediate feedback for every decision")
+    print("   * Chip EV maximization = optimal poker")
+    print("   * No artificial incentives")
+    print("   * Consistent with pro poker strategy")
+    print("   * Simple, clear learning signal")
     print("")
     print("Environment:")
+    print("   * ompeval C++ Monte Carlo Equity (Ultra-Fast)")
+    print("   * Bitmask Optimization")
     print("=" * 80)
     
     # Run training
@@ -142,7 +135,7 @@ def train_tournament_icm():
         callbacks=[
             MLflowLoggerCallback(
                 tracking_uri="file:./mlruns",
-                experiment_name="tournament-poker-icm-survival",
+                experiment_name="deepstack-7actions-dense-v2-fair",
                 save_artifact=True,
             ),
         ],
@@ -159,11 +152,8 @@ def train_tournament_icm():
     print("Watch games:")
     print("  python watch_tournament.py --checkpoint <path_to_checkpoint>")
     print("")
-    print("Compare reward functions:")
-    print("  This model: ICM + Survival")
-    print("  Previous:   Linear chip difference")
-    print("   Check TensorBoard for performance comparison!")
     print("=" * 80)
+
     ray.shutdown()
 
 if __name__ == "__main__":
