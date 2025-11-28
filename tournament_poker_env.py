@@ -61,6 +61,9 @@ class TournamentPokerEnv:
             # For now, we map available RLCard actions to our discrete space
         }
         
+        # Action space size
+        self.action_space_size = 7
+        
         # Observation space
         # 54 (RLCard default) + 1 (Equity) + 2 (Chip stacks) + 1 (Chip ratio) + 1 (Pot ratio) + 1 (Blind level)
         self.observation_space_size = 60
@@ -69,8 +72,19 @@ class TournamentPokerEnv:
 
     def step(self, action):
         """Execute one action in the tournament"""
+        # Map Agent Action -> RLCard Action
+        # Reverse of rlcard_to_agent_action
+        # 0->0, 1->1, 3->2, 6->3
+        # Note: If we want to support other bet sizes (2, 4, 5), we need custom logic.
+        # For now, we only map the ones that exist in RLCard's legal actions.
+        rlcard_action = action
+        if action == 3:
+            rlcard_action = 2
+        elif action == 6:
+            rlcard_action = 3
+            
         # Execute action in current hand
-        next_state, next_player = self.base_env.step(action)
+        next_state, next_player = self.base_env.step(rlcard_action)
         self.current_state = next_state  # Store state for legal actions
         self.current_player = next_player
         

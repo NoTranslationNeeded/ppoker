@@ -46,7 +46,7 @@ def train_tournament_dense():
     
     # MLflow setup
     mlflow.set_tracking_uri("file:./mlruns")
-    mlflow.set_experiment("deepstack-7actions-dense-v2-fair")
+    mlflow.set_experiment("deepstack_7actions_dense_v3_ompeval")
 
     # Configure PPO with Transformer
     config = (
@@ -126,7 +126,7 @@ def train_tournament_dense():
     # Run training
     results = tune.run(
         "PPO",
-        name="deepstack_7actions_dense_v2_fair",
+        name="deepstack_7actions_dense_v3_ompeval",
         config=config.to_dict(),
         stop=stop,
         checkpoint_freq=10,
@@ -135,7 +135,7 @@ def train_tournament_dense():
         callbacks=[
             MLflowLoggerCallback(
                 tracking_uri="file:./mlruns",
-                experiment_name="deepstack-7actions-dense-v2-fair",
+                experiment_name="deepstack_7actions_dense_v3_ompeval",
                 save_artifact=True,
             ),
         ],
