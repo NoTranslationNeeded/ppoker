@@ -1,9 +1,0 @@
-torch
-numpy<2
-eval7
-rlcard
-ray[rllib]
-gymnasium
-pettingzoo
-mlflow
-tensorboard
