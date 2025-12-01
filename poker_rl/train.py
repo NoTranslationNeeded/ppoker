@@ -83,7 +83,7 @@ def train():
         run_config=tune.RunConfig(
             stop={"training_iteration": 1000}, # Run for 1000 iterations
             storage_path=os.path.abspath("experiments/logs"),
-            name="poker_ppo_v2_fixed",
+            name="epsilon",
         ),
     )
     
