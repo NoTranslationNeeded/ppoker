@@ -20,6 +20,8 @@ except ImportError:
     except ImportError:
         raise ImportError("Could not import poker_engine. Please ensure POKERENGINE is in the Python path.")
 
+from poker_rl.utils.obs_builder import ObservationBuilder
+
 class PokerMultiAgentEnv(MultiAgentEnv):
     """
     2-player Heads-up No-Limit Texas Hold'em Multi-Agent Environment
@@ -72,7 +74,7 @@ class PokerMultiAgentEnv(MultiAgentEnv):
             "observations": spaces.Box(
                 low=0.0,
                 high=2.5,
-                shape=(326,),
+                shape=(150,),
                 dtype=np.float32
             ),
             "action_mask": spaces.Box(
@@ -155,8 +157,8 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         # CRITICAL: Return obs for BOTH players so RLlib initializes both agents.
         # Even if only one acts, the other needs to be "in" the episode to get rewards.
         obs_dict = {
-            "player_0": self._get_observation(0),
-            "player_1": self._get_observation(1)
+            "player_0": ObservationBuilder.get_observation(self.game, 0, self.action_history),
+            "player_1": ObservationBuilder.get_observation(self.game, 1, self.action_history)
         }
         info_dict = {}
         
@@ -225,7 +227,7 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         # Prepare next step
         next_player = self.game.get_current_player()
         
-        obs_dict = {f"player_{next_player}": self._get_observation(next_player)}
+        obs_dict = {f"player_{next_player}": ObservationBuilder.get_observation(self.game, next_player, self.action_history)}
         reward_dict = {f"player_{next_player}": 0.0} # No intermediate rewards
         terminated_dict = {"__all__": False}
         truncated_dict = {"__all__": False}
@@ -277,105 +279,16 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         # CRITICAL FIX: Must return observations for ALL agents at termination
         # otherwise RLlib might drop the reward for the agent that didn't act in the last step.
         obs_dict = {
-            "player_0": self._get_observation(0),
-            "player_1": self._get_observation(1)
+            "player_0": ObservationBuilder.get_observation(self.game, 0, self.action_history),
+            "player_1": ObservationBuilder.get_observation(self.game, 1, self.action_history)
         }
         truncated_dict = {"__all__": False}
         info_dict = {}
         
         return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
 
-    def _get_observation(self, player_id: int) -> dict:
-        obs_vec = np.zeros(326, dtype=np.float32)
-        
-        # 1. Cards (0-118)
-        # Hole cards
-        for i, card in enumerate(self.game.players[player_id].hand[:2]):
-            obs_vec[i*17:(i+1)*17] = self._encode_card_onehot(card)
-        # Community cards
-        for i, card in enumerate(self.game.community_cards):
-            obs_vec[34+i*17:34+(i+1)*17] = self._encode_card_onehot(card)
-            
-        # 2. Game State (119-149)
-        player = self.game.players[player_id]
-        opponent = self.game.players[1 - player_id]
-        pot = self.game.get_pot_size()
-        to_call = self.game.current_bet - player.bet_this_round
-        
-        bb = self.big_blind
-        max_bb = 500.0 # Normalization constant
-        
-        # Street mapping
-        street_val = 0.0
-        if self.game.street.value == 'flop': street_val = 0.33
-        elif self.game.street.value == 'turn': street_val = 0.66
-        elif self.game.street.value == 'river': street_val = 1.0
-        
-        obs_vec[119:150] = [
-            (player.chips / bb) / max_bb,
-            (opponent.chips / bb) / max_bb,
-            (pot / bb) / max_bb,
-            (self.game.current_bet / bb) / max_bb,
-            (player.bet_this_round / bb) / max_bb,
-            (to_call / bb) / max_bb,
-            1.0 if self.game.button_position == player_id else 0.0,
-            street_val,
-            to_call / (pot + to_call) if to_call > 0 and pot > 0 else 0.0,
-            np.clip((player.chips / pot) / 10.0, 0, 1.0) if pot > 0 else 1.0,
-            0.0, # Hand count / max hands (not used in single hand episode)
-            len(self.game.community_cards) / 5.0,
-            (self.game.min_raise / bb) / max_bb,
-            (opponent.bet_this_round / bb) / max_bb,
-            (opponent.bet_this_hand / bb) / max_bb,
-            bb / 100.0, # Relative blind size
-            # Padding to 31 floats
-            0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        ]
-        
-        # 3. Action History (150-325)
-        offset = 150
-        for street in ['preflop', 'flop', 'turn', 'river']:
-            actions = self.action_history.get(street, [])[-4:] # Last 4
-            for i in range(4):
-                if i < len(actions):
-                    a_idx, p_id, b_ratio = actions[i]
-                    # Action One-Hot (8)
-                    obs_vec[offset + i*11 : offset + i*11 + 8] = np.eye(8)[a_idx]
-                    # Player One-Hot (2)
-                    obs_vec[offset + i*11 + 8 : offset + i*11 + 10] = np.eye(2)[p_id]
-                    # Bet Ratio (1)
-                    obs_vec[offset + i*11 + 10] = b_ratio
-            offset += 44 # 4 actions * 11 dims
-            
-        mask = self._get_legal_actions_mask(player_id).astype(np.float32)
-        
-        return {
-            "observations": obs_vec.astype(np.float32),
-            "action_mask": mask
-        }
-
-    def _encode_card_onehot(self, card) -> np.ndarray:
-        encoding = np.zeros(17, dtype=np.float32)
-        # Rank 0-12
-        ranks = "23456789TJQKA"
-        try:
-            rank_idx = ranks.index(str(card.rank))
-        except:
-            # Handle 10 represented as 'T' or '10'
-            if str(card.rank) == '10': rank_idx = 8
-            else: rank_idx = 0 # Fallback
-            
-        encoding[rank_idx] = 1.0
-        
-        # Suit 13-16
-        suits = "shdc" # Spade, Heart, Diamond, Club (Check Card class)
-        # Assuming Card.suit is 's', 'h', 'd', 'c' or similar
-        # Let's check Card class later, assuming standard
-        suit_map = {'s': 0, 'h': 1, 'd': 2, 'c': 3, '♠': 0, '♥': 1, '♦': 2, '♣': 3}
-        suit_idx = suit_map.get(str(card.suit).lower(), 0)
-        encoding[13 + suit_idx] = 1.0
-        
-        return encoding
+    # _get_observation, _encode_card_onehot removed (DRY)
+    # Using ObservationBuilder instead
 
     def _map_action(self, action_idx: int, player_id: int) -> Action:
         player = self.game.players[player_id]
@@ -413,25 +326,7 @@ class PokerMultiAgentEnv(MultiAgentEnv):
                     return Action.all_in(player.chips)
                 return Action.bet(bet_amount)
 
-    def _get_legal_actions_mask(self, player_id: int) -> np.ndarray:
-        legal = self.game.get_legal_actions(player_id)
-        mask = np.zeros(8, dtype=np.int8)
-        
-        # Map Engine ActionTypes to our Discrete(8)
-        # FOLD -> 0
-        if ActionType.FOLD in legal: mask[0] = 1
-        
-        # CHECK/CALL -> 1
-        if ActionType.CHECK in legal or ActionType.CALL in legal: mask[1] = 1
-        
-        # BET/RAISE -> 2,3,4,5,6
-        if ActionType.BET in legal or ActionType.RAISE in legal:
-            mask[2:7] = 1
-            
-        # ALL_IN -> 7
-        if ActionType.ALL_IN in legal: mask[7] = 1
-        
-        return mask
+    # _get_legal_actions_mask removed (DRY)
 
     def _record_action(self, action_idx: int, player_id: int, bet_amount: float, pot_before: float, street: str):
         if pot_before > 0:

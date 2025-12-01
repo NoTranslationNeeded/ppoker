@@ -1,0 +1,134 @@
+
+import numpy as np
+from poker_engine.game import PokerGame, Action, ActionType
+
+class ObservationBuilder:
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def get_observation(game: PokerGame, player_id: int, action_history: dict) -> dict:
+        obs_vec = np.zeros(150, dtype=np.float32)
+        
+        # 1. Cards (0-118)
+        # Hole cards
+        for i, card in enumerate(game.players[player_id].hand[:2]):
+            obs_vec[i*17:(i+1)*17] = ObservationBuilder._encode_card_onehot(card)
+        # Community cards
+        for i, card in enumerate(game.community_cards):
+            obs_vec[34+i*17:34+(i+1)*17] = ObservationBuilder._encode_card_onehot(card)
+            
+        # 2. Game State (119-149)
+        player = game.players[player_id]
+        opponent = game.players[1 - player_id]
+        pot = game.get_pot_size()
+        to_call = game.current_bet - player.bet_this_round
+        
+        bb = game.big_blind
+        max_bb = 500.0 # Normalization constant
+        
+        # Street mapping
+        street_val = 0.0
+        if game.street.value == 'flop': street_val = 0.33
+        elif game.street.value == 'turn': street_val = 0.66
+        elif game.street.value == 'river': street_val = 1.0
+        
+        obs_vec[119:150] = [
+            (player.chips / bb) / max_bb,
+            (opponent.chips / bb) / max_bb,
+            (pot / bb) / max_bb,
+            (game.current_bet / bb) / max_bb,
+            (player.bet_this_round / bb) / max_bb,
+            (to_call / bb) / max_bb,
+            1.0 if game.button_position == player_id else 0.0,
+            street_val,
+            to_call / (pot + to_call) if to_call > 0 and pot > 0 else 0.0,
+            np.clip((player.chips / pot) / 10.0, 0, 1.0) if pot > 0 else 1.0,
+            0.0, # Hand count / max hands (not used in single hand episode)
+            len(game.community_cards) / 5.0,
+            (game.min_raise / bb) / max_bb,
+            (opponent.bet_this_round / bb) / max_bb,
+            (opponent.bet_this_hand / bb) / max_bb,
+            bb / 100.0, # Relative blind size
+            # Padding to 31 floats
+            0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        ]
+        
+        # 3. Action History (Removed for LSTM)
+            
+        mask = ObservationBuilder._get_legal_actions_mask(game, player_id).astype(np.float32)
+        
+        return {
+            "observations": obs_vec.astype(np.float32),
+            "action_mask": mask
+        }
+
+    @staticmethod
+    def _encode_card_onehot(card) -> np.ndarray:
+        encoding = np.zeros(17, dtype=np.float32)
+        # Rank 0-12
+        ranks = "23456789TJQKA"
+        try:
+            rank_idx = ranks.index(str(card.rank))
+        except:
+            # Handle 10 represented as 'T' or '10'
+            if str(card.rank) == '10': rank_idx = 8
+            else: rank_idx = 0 # Fallback
+            
+        encoding[rank_idx] = 1.0
+        
+        # Suit 13-16
+        # Assuming Card.suit is 's', 'h', 'd', 'c' or similar
+        suit_map = {'s': 0, 'h': 1, 'd': 2, 'c': 3, '♠': 0, '♥': 1, '♦': 2, '♣': 3}
+        suit_idx = suit_map.get(str(card.suit).lower(), 0)
+        encoding[13 + suit_idx] = 1.0
+        
+        return encoding
+
+    @staticmethod
+    def _get_legal_actions_mask(game: PokerGame, player_id: int) -> np.ndarray:
+        legal = game.get_legal_actions(player_id)
+        mask = np.zeros(8, dtype=np.int8)
+        
+        # Map Engine ActionTypes to our Discrete(8)
+        # Map Engine ActionTypes to our Discrete(8)
+        if ActionType.FOLD in legal: mask[0] = 1
+        if ActionType.CHECK in legal or ActionType.CALL in legal: mask[1] = 1
+        
+        # Smart Masking for Bet/Raise
+        # Only enable mask if the calculated amount is valid (>= min_raise)
+        if ActionType.BET in legal or ActionType.RAISE in legal:
+            pot = game.get_pot_size()
+            player = game.players[player_id]
+            current_bet = game.current_bet
+            min_raise = game.min_raise
+            
+            pcts = [0.33, 0.50, 0.75, 1.0, 1.5]
+            for i, pct in enumerate(pcts):
+                idx = 2 + i
+                amount = pot * pct
+                
+                # Logic from _map_action (simplified for validation)
+                if current_bet > 0:
+                    # Raise
+                    target = current_bet + amount
+                    min_target = current_bet + min_raise
+                    
+                    # If target is less than min_raise, it's invalid unless it's an all-in (which is handled by index 7)
+                    # However, _map_action forces it to min_raise.
+                    # But we want to mask it if the INTENT (33%) results in an invalid amount.
+                    # If 33% pot < min_raise, then 33% bet is effectively a min-raise or invalid.
+                    # If we mask it, the agent is forced to choose a higher percentage or fold/call.
+                    # This prevents "I bet 33%" resulting in "You Min-Raised".
+                    
+                    if target >= min_target:
+                        mask[idx] = 1
+                else:
+                    # Bet
+                    # Min bet is big blind
+                    if amount >= game.big_blind:
+                        mask[idx] = 1
+                        
+        if ActionType.ALL_IN in legal: mask[7] = 1
+        
+        return mask

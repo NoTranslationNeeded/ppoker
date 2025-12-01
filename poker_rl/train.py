@@ -31,6 +31,7 @@ def train():
     
     # Register Model
     ModelCatalog.register_custom_model("masked_mlp", MaskedMLP)
+    ModelCatalog.register_custom_model("masked_lstm", MaskedLSTM)
     
     # Configuration
     config = (
@@ -39,8 +40,11 @@ def train():
         .framework("torch")
         .training(
             model={
-                "custom_model": "masked_mlp",
-                "fcnet_hiddens": [512, 512, 256], # Ignored by custom model but good for reference
+                "custom_model": "masked_lstm",
+                "custom_model_config": {
+                    "lstm_cell_size": 256,
+                },
+                "max_seq_len": 20, # Length of history to train on
             },
             train_batch_size=32768, # Increased to >30000 as requested
             gamma=0.99,

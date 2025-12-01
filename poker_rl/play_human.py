@@ -46,6 +46,8 @@ except ImportError:
 # ==========================================
 from poker_rl.agents.random_agent import RandomAgent
 from poker_rl.agents.call_station import CallStationAgent
+from poker_rl.agents.rl_agent import RLAgent
+from poker_rl.utils.obs_builder import ObservationBuilder
 
 # ==========================================
 # 4. Helper Functions
@@ -257,7 +259,7 @@ def get_human_action(game, player_id):
         except Exception as e:
             print(f"Error creating action: {e}")
 
-def get_bot_action(agent, game, player_id):
+def get_bot_action(agent, game, player_id, action_history):
     # Construct dummy observation and mask
     legal_actions = game.get_legal_actions(player_id)
     
@@ -271,19 +273,27 @@ def get_bot_action(agent, game, player_id):
     if ActionType.ALL_IN in legal_actions: mask[7] = 1
     
     # RandomAgent and CallStationAgent don't use the observation vector, so we pass None
-    action_idx = agent.compute_action(None, mask)
+    if isinstance(agent, RLAgent):
+        # Build observation using ObservationBuilder
+        obs_dict = ObservationBuilder.get_observation(game, player_id, action_history)
+        observation = obs_dict["observations"]
+        mask = obs_dict["action_mask"] # Use mask from builder for consistency
+        
+        action_idx = agent.compute_action(observation, mask)
+    else:
+        action_idx = agent.compute_action(None, mask)
     
     # Convert index back to engine Action
     player = game.players[player_id]
     pot = game.get_pot_size() # Use get_pot_size() here too
     
     if action_idx == 0:
-        return Action.fold()
+        return Action.fold(), action_idx
     elif action_idx == 1:
         to_call = game.current_bet - player.bet_this_round
-        return Action.check() if to_call == 0 else Action.call(to_call)
+        return (Action.check() if to_call == 0 else Action.call(to_call)), action_idx
     elif action_idx == 7:
-        return Action.all_in(player.chips)
+        return Action.all_in(player.chips), action_idx
     else:
         # Bet actions (2-6)
         pcts = [0.33, 0.50, 0.75, 1.0, 1.5]
@@ -299,20 +309,23 @@ def get_bot_action(agent, game, player_id):
                  
                  # Check if target exceeds chips (cap to all-in)
                  if target > player.chips + player.bet_this_round:
-                     return Action.all_in(player.chips)
+                     return Action.all_in(player.chips), action_idx
                      
-                 return Action.raise_to(target)
+                 return Action.raise_to(target), action_idx
             else:
                  amount = max(amount, game.big_blind)
                  if amount > player.chips:
-                     return Action.all_in(player.chips)
-                 return Action.bet(amount)
+                     return Action.all_in(player.chips), action_idx
+                 return Action.bet(amount), action_idx
+        
+    return Action.check(), 1 # Fallback
         
     return Action.check() # Fallback
 
 def main():
     parser = argparse.ArgumentParser(description="Play Poker against a Bot")
-    parser.add_argument("--opponent", type=str, choices=['random', 'call_station'], default='random', help="Opponent type")
+    parser.add_argument("--opponent", type=str, choices=['random', 'call_station', 'rl'], default='random', help="Opponent type")
+    parser.add_argument("--checkpoint", type=str, default="", help="Path to RL checkpoint (required for --opponent rl)")
     parser.add_argument("--stack", type=float, default=2000.0, help="Starting stack size")
     parser.add_argument("--sb", type=float, default=50.0, help="Small Blind")
     parser.add_argument("--bb", type=float, default=100.0, help="Big Blind")
@@ -322,8 +335,13 @@ def main():
     
     if args.opponent == 'random':
         bot_agent = RandomAgent()
-    else:
+    elif args.opponent == 'call_station':
         bot_agent = CallStationAgent()
+    elif args.opponent == 'rl':
+        if not args.checkpoint:
+            print("Error: --checkpoint is required for RL opponent")
+            sys.exit(1)
+        bot_agent = RLAgent(args.checkpoint)
         
     # Initialize chips
     human_chips = args.stack
@@ -348,6 +366,17 @@ def main():
             button=button
         )
         
+        # Initialize action history for this hand
+        action_history = {
+            'preflop': [],
+            'flop': [],
+            'turn': [],
+            'river': []
+        }
+        
+        if isinstance(bot_agent, RLAgent):
+            bot_agent.reset_state()
+        
         # Use is_hand_over instead of hand_over
         while not game.is_hand_over:
             print_game_state(game, human_id)
@@ -356,11 +385,36 @@ def main():
             
             if current_player == human_id:
                 action = get_human_action(game, human_id)
+                # We need to map human action to action_idx for history if possible
+                # For now, we can approximate or skip. 
+                # But for correct observation for BOT, we need human's action in history.
+                # Let's infer action_idx from action type and amount.
+                # This is a bit complex, but let's try a simple mapping.
+                if action.action_type == ActionType.FOLD: act_idx = 0
+                elif action.action_type in [ActionType.CHECK, ActionType.CALL]: act_idx = 1
+                elif action.action_type == ActionType.ALL_IN: act_idx = 7
+                else: act_idx = 3 # Assume 50% bet for generic bet/raise
+                
             else:
                 print("Bot is thinking...")
                 time.sleep(1) # Fake thinking time
-                action = get_bot_action(bot_agent, game, bot_id)
+                action, act_idx = get_bot_action(bot_agent, game, bot_id, action_history)
                 print(f"Bot did: {action}")
+            
+            # Record action for history
+            pot_before = game.get_pot_size()
+            street_name = game.street.value
+            
+            # Calculate bet ratio
+            bet_amount = action.amount if action.amount > 0 else 0
+            if pot_before > 0:
+                ratio = bet_amount / pot_before
+            else:
+                ratio = 0.0
+            ratio = min(ratio, 2.5)
+            
+            if street_name in action_history:
+                action_history[street_name].append((act_idx, current_player, ratio))
             
             try:
                 success, error = game.process_action(current_player, action)
