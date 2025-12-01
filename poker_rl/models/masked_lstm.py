@@ -10,7 +10,7 @@ class MaskedLSTM(TorchModelV2, nn.Module):
     """
     Custom Model that handles Action Masking and LSTM memory
     """
-    def __init__(self, obs_space, action_space, num_outputs, model_config, name):
+    def __init__(self, obs_space, action_space, num_outputs, model_config, name, **kwargs):
         TorchModelV2.__init__(self, obs_space, action_space, num_outputs, model_config, name)
         nn.Module.__init__(self)
         
@@ -22,7 +22,11 @@ class MaskedLSTM(TorchModelV2, nn.Module):
             # Fallback if not wrapped or different structure
             input_size = obs_space["observations"].shape[0]
             
-        self.lstm_state_size = model_config.get("lstm_cell_size", 256)
+        # Handle custom_model_config passed as kwargs (RLlib recommendation)
+        # or inside model_config['custom_model_config'] (legacy)
+        self.lstm_state_size = kwargs.get("lstm_cell_size")
+        if self.lstm_state_size is None:
+             self.lstm_state_size = model_config.get("custom_model_config", {}).get("lstm_cell_size", 256)
         
         # FC Layers for feature extraction
         self.fc1 = nn.Linear(input_size, 512)

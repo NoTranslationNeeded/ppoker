@@ -1,5 +1,13 @@
 
 import os
+import sys
+
+# Add project root to path so we can import poker_rl when running as script
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
 import ray
 import numpy as np
 from ray import tune
@@ -9,6 +17,7 @@ from ray.tune.registry import register_env
 
 from poker_rl.env import PokerMultiAgentEnv
 from poker_rl.models.masked_mlp import MaskedMLP
+from poker_rl.models.masked_lstm import MaskedLSTM
 
 def env_creator(config):
     # Suppress numpy overflow warnings in worker processes (RLlib internal issue)
@@ -61,7 +70,7 @@ def train():
             },
             policy_mapping_fn=lambda agent_id, episode, worker, **kwargs: "main_policy",
         )
-        .resources(num_gpus=0) # Set to 1 if GPU available
+        .resources(num_gpus=1) # Set to 1 if GPU available
         .env_runners(num_env_runners=4)
         .api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
     )

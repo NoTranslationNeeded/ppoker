@@ -8,7 +8,7 @@ from ray.rllib.env.multi_agent_env import MultiAgentEnv
 
 # Add POKERENGINE to path
 current_dir = os.path.dirname(os.path.abspath(__file__))
-poker_engine_path = os.path.join(current_dir, '..', '..', 'POKERENGINE')
+poker_engine_path = os.path.join(current_dir, '..', 'POKERENGINE')
 sys.path.append(poker_engine_path)
 
 try:
@@ -148,8 +148,16 @@ class PokerMultiAgentEnv(MultiAgentEnv):
             'preflop': [],
             'flop': [],
             'turn': [],
+            'turn': [],
             'river': []
         }
+        
+        # Logging for debug
+        self.hand_logs = []
+        self.hand_logs.append(f"\n=== Hand Start (Dealer: P{self.button}) ===")
+        self.hand_logs.append(f"Stacks: P0={self.chips[0]:.1f}, P1={self.chips[1]:.1f}")
+        self.hand_logs.append(f"Hole Cards P0: {[str(c) for c in self.game.players[0].hand]}")
+        self.hand_logs.append(f"Hole Cards P1: {[str(c) for c in self.game.players[1].hand]}")
         
         current_player = self.game.get_current_player()
         
@@ -220,6 +228,10 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         
         self._record_action(action_idx, current_player, real_bet, pot_before, street_before)
         
+        # Log action
+        action_str = f"Street: {street_before}, P{current_player} {engine_action} (Pot: {pot_before:.1f})"
+        self.hand_logs.append(action_str)
+        
         # Check if hand is over
         if self.game.is_hand_over:
             return self._handle_hand_over()
@@ -254,6 +266,16 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         
         reward_dict["player_0"] = float(p0_reward)
         reward_dict["player_1"] = float(-p0_reward) # Zero-sum
+        
+        # Occasional logging
+        # train_batch_size=32768 steps. Avg steps/hand ~4-5. -> ~8000 hands/batch.
+        # To log once per 4000 hands, prob should be 1/4000 = 0.00025
+        if np.random.random() < 0.00025:
+            self.hand_logs.append(f"Community Cards: {[str(c) for c in self.game.community_cards]}")
+            self.hand_logs.append(f"Result: P0 {p0_reward:.4f}, P1 {-p0_reward:.4f}")
+            self.hand_logs.append("=== Hand End ===")
+            # Use ' || ' separator to keep log as one atomic line in Ray output
+            print(" || ".join(self.hand_logs))
         
         # Terminate episode (one hand per episode for now, or continue?)
         # Plan says "Tournament style: Episode = Tournament".
