@@ -1,6 +1,7 @@
 
 import numpy as np
 from poker_engine.game import PokerGame, Action, ActionType
+from .equity_calculator import get_8_features
 
 class ObservationBuilder:
     def __init__(self):
@@ -18,7 +19,7 @@ class ObservationBuilder:
         for i, card in enumerate(game.community_cards):
             obs_vec[34+i*17:34+(i+1)*17] = ObservationBuilder._encode_card_onehot(card)
             
-        # 2. Game State (119-149)
+        # 2. Game State (119-134)
         player = game.players[player_id]
         opponent = game.players[1 - player_id]
         pot = game.get_pot_size()
@@ -33,7 +34,7 @@ class ObservationBuilder:
         elif game.street.value == 'turn': street_val = 0.66
         elif game.street.value == 'river': street_val = 1.0
         
-        obs_vec[119:150] = [
+        obs_vec[119:135] = [
             (player.chips / bb) / max_bb,
             (opponent.chips / bb) / max_bb,
             (pot / bb) / max_bb,
@@ -50,11 +51,21 @@ class ObservationBuilder:
             (opponent.bet_this_round / bb) / max_bb,
             (opponent.bet_this_hand / bb) / max_bb,
             bb / 100.0, # Relative blind size
-            # Padding to 31 floats
-            0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
         ]
         
-        # 3. Action History (Removed for LSTM)
+        # 3. Advanced Hand Evaluation Features (135-142)
+        # Get 8 features: [hs/equity, ppot, npot, hand_index, is_pre, is_flop, is_turn, is_river]
+        hole_cards = player.hand
+        board = game.community_cards
+        street_name = game.street.value  # 'preflop', 'flop', 'turn', 'river'
+        
+        advanced_features = get_8_features(hole_cards, board, street_name)
+        obs_vec[135:143] = advanced_features
+        
+        # 4. Remaining padding (143-149)
+        obs_vec[143:150] = [0, 0, 0, 0, 0, 0, 0]
+        
+        # 5. Action History (Removed for LSTM)
             
         mask = ObservationBuilder._get_legal_actions_mask(game, player_id).astype(np.float32)
         

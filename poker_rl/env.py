@@ -80,7 +80,7 @@ class PokerMultiAgentEnv(MultiAgentEnv):
             "action_mask": spaces.Box(
                 low=0.0,
                 high=1.0,
-                shape=(13,),
+                shape=(14,),
                 dtype=np.float32
             )
         })
@@ -277,6 +277,35 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         # train_batch_size=32768 steps. Avg steps/hand ~4-5. -> ~8000 hands/batch.
         # To log once per 4000 hands, prob should be 1/4000 = 0.00025
         if np.random.random() < 0.00025:
+            # Get 8 advanced features for both players
+            from poker_rl.utils.equity_calculator import get_8_features, get_hand_name_from_index
+            
+            p0_features = get_8_features(
+                self.game.players[0].hand,
+                self.game.community_cards,
+                self.game.street.value
+            )
+            p1_features = get_8_features(
+                self.game.players[1].hand,
+                self.game.community_cards,
+                self.game.street.value
+            )
+            
+            # Extract feature values
+            p0_hs, p0_ppot, p0_npot, p0_hidx = p0_features[:4]
+            p1_hs, p1_ppot, p1_npot, p1_hidx = p1_features[:4]
+            
+            # Get hand names
+            p0_hand = get_hand_name_from_index(int(p0_hidx))
+            p1_hand = get_hand_name_from_index(int(p1_hidx))
+            
+            # Determine street
+            street_name = self.game.street.value.capitalize()
+            
+            # Build feature log
+            self.hand_logs.append(f"P0({p0_hand}): HS={p0_hs:.2f} PPot={p0_ppot:.2f} NPot={p0_npot:.2f} HIdx={int(p0_hidx)} [{street_name}]")
+            self.hand_logs.append(f"P1({p1_hand}): HS={p1_hs:.2f} PPot={p1_ppot:.2f} NPot={p1_npot:.2f} HIdx={int(p1_hidx)} [{street_name}]")
+            
             self.hand_logs.append(f"Community Cards: {[str(c) for c in self.game.community_cards]}")
             self.hand_logs.append(f"Result: P0 {p0_reward:.4f}, P1 {-p0_reward:.4f}")
             self.hand_logs.append("=== Hand End ===")
@@ -333,7 +362,9 @@ class PokerMultiAgentEnv(MultiAgentEnv):
             # Min Raise ONLY (No Min Bet)
             if self.game.current_bet > 0:
                 # Raise to min raise
-                target = self.game.current_bet + self.game.min_raise
+                # Add epsilon to ensure we meet the "at least" requirement despite float precision
+                target = self.game.current_bet + self.game.min_raise + 1e-5
+                
                 # Cap at chips
                 max_bet = player.chips + player.bet_this_round
                 if target >= max_bet:

@@ -32,6 +32,8 @@ import argparse
 
 def train(experiment_name="epsilon", resume=False):
     # Initialize Ray with runtime_env to suppress warnings in all actors
+    if ray.is_initialized():
+        ray.shutdown()
     ray.init(runtime_env={"env_vars": {"PYTHONWARNINGS": "ignore"}})
     
     # Suppress warnings in driver

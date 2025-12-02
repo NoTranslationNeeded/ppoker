@@ -28,8 +28,16 @@ class MaskedLSTM(TorchModelV2, nn.Module):
         if self.lstm_state_size is None:
              self.lstm_state_size = model_config.get("custom_model_config", {}).get("lstm_cell_size", 256)
         
+        # Hand Index Embedding Layer
+        # 179 IDs (0-168 preflop + 169-178 postflop) -> 6 dimensional embedding
+        self.hand_index_embedding = nn.Embedding(179, 6)
+        self.hand_index_pos = 138  # Position of Hand Index in observation
+        
         # FC Layers for feature extraction
-        self.fc1 = nn.Linear(input_size, 512)
+        # Input size is now: original_size - 1 (hand_index removed) + 6 (embedding added)
+        # = 150 - 1 + 6 = 155
+        fc_input_size = input_size - 1 + 6
+        self.fc1 = nn.Linear(fc_input_size, 512)
         self.fc2 = nn.Linear(512, 512)
         
         # LSTM Layer
@@ -54,6 +62,10 @@ class MaskedLSTM(TorchModelV2, nn.Module):
                     nn.init.orthogonal_(param)
                 elif "bias" in name:
                     nn.init.constant_(param, 0.0)
+            elif "hand_index_embedding" in name:
+                # Initialize embedding with small random values
+                if "weight" in name:
+                    nn.init.normal_(param, mean=0.0, std=0.1)
             elif "lstm" in name:
                 if "weight_ih" in name:
                     nn.init.orthogonal_(param)
@@ -91,8 +103,20 @@ class MaskedLSTM(TorchModelV2, nn.Module):
         obs = input_dict["obs"]["observations"]
         action_mask = input_dict["obs"]["action_mask"]
         
+        # Extract Hand Index (index 138) and pass through embedding
+        # Defensive: round to nearest integer and clamp to valid range [0, 178]
+        hand_index = obs[:, self.hand_index_pos]
+        hand_index = torch.round(hand_index).clamp(0, 178).long()  # Safe int conversion
+        hand_emb = self.hand_index_embedding(hand_index)  # (batch, 6)
+        
+        # Concatenate all features except Hand Index + embedded Hand Index
+        # obs[:, :138] + obs[:, 139:] + hand_emb
+        obs_before = obs[:, :self.hand_index_pos]  # (batch, 138)
+        obs_after = obs[:, self.hand_index_pos+1:]  # (batch, 11) = 150-139
+        obs_combined = torch.cat([obs_before, obs_after, hand_emb], dim=1)  # (batch, 155)
+        
         # Forward pass through FC layers
-        x = torch.relu(self.fc1(obs))
+        x = torch.relu(self.fc1(obs_combined))
         x = torch.relu(self.fc2(x))
         
         # LSTM requires [Batch, Seq, Feature]
