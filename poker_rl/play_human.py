@@ -263,14 +263,14 @@ def get_bot_action(agent, game, player_id, action_history):
     # Construct dummy observation and mask
     legal_actions = game.get_legal_actions(player_id)
     
-    # Map legal actions to our 8 discrete actions for the agent
-    mask = np.zeros(8, dtype=np.int8)
+    # Map legal actions to our 14 discrete actions for the agent
+    mask = np.zeros(14, dtype=np.int8)
     
     # Simple mapping for benchmark bots
     if ActionType.FOLD in legal_actions: mask[0] = 1
     if ActionType.CHECK in legal_actions or ActionType.CALL in legal_actions: mask[1] = 1
-    if ActionType.BET in legal_actions or ActionType.RAISE in legal_actions: mask[2:7] = 1 # Allow all bet sizes
-    if ActionType.ALL_IN in legal_actions: mask[7] = 1
+    if ActionType.BET in legal_actions or ActionType.RAISE in legal_actions: mask[2:13] = 1 # Allow all bet sizes
+    if ActionType.ALL_IN in legal_actions: mask[13] = 1
     
     # RandomAgent and CallStationAgent don't use the observation vector, so we pass None
     if isinstance(agent, RLAgent):
@@ -292,13 +292,29 @@ def get_bot_action(agent, game, player_id, action_history):
     elif action_idx == 1:
         to_call = game.current_bet - player.bet_this_round
         return (Action.check() if to_call == 0 else Action.call(to_call)), action_idx
-    elif action_idx == 7:
+    elif action_idx == 13:
         return Action.all_in(player.chips), action_idx
+    elif action_idx == 2:
+        # Min Raise ONLY (No Min Bet)
+        if game.current_bet > 0:
+             target = game.current_bet + game.min_raise
+             if target > player.chips + player.bet_this_round:
+                 return Action.all_in(player.chips), action_idx
+             return Action.raise_to(target), action_idx
+        else:
+             # Should be masked out, but if chosen, fallback to check/fold or min bet?
+             # User said "Min-Bet is banned".
+             # If AI picks this when masked, it's an error.
+             # But for robustness, let's treat it as Min Bet (1BB) if we have to, 
+             # OR fallback to Check.
+             # Given strict masking, this shouldn't happen.
+             # Let's fallback to Check to be safe and compliant.
+             return Action.check(), action_idx
     else:
-        # Bet actions (2-6)
-        pcts = [0.33, 0.50, 0.75, 1.0, 1.5]
-        if 2 <= action_idx <= 6:
-            pct = pcts[action_idx - 2]
+        # Bet actions (3-12)
+        pcts = [0.10, 0.25, 0.33, 0.50, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0]
+        if 3 <= action_idx <= 12:
+            pct = pcts[action_idx - 3]
             amount = pot * pct
             
             # Ensure min raise / min bet
@@ -313,7 +329,8 @@ def get_bot_action(agent, game, player_id, action_history):
                      
                  return Action.raise_to(target), action_idx
             else:
-                 amount = max(amount, game.big_blind)
+                 # Strict Masking: No Auto-Correction
+                 # amount = max(amount, game.big_blind) # REMOVED
                  if amount > player.chips:
                      return Action.all_in(player.chips), action_idx
                  return Action.bet(amount), action_idx

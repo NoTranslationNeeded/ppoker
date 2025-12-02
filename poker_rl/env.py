@@ -85,21 +85,22 @@ class PokerMultiAgentEnv(MultiAgentEnv):
             )
         })
         
-        # Action Space: Discrete(13)
+        # Action Space: Discrete(14)
         # 0: Fold
         # 1: Check/Call
-        # 2: Bet 10%
-        # 3: Bet 25%
-        # 4: Bet 33%
-        # 5: Bet 50%
-        # 6: Bet 75%
-        # 7: Bet 100%
-        # 8: Bet 125%
-        # 9: Bet 150%
-        # 10: Bet 200%
-        # 11: Bet 300%
-        # 12: All-in
-        self.action_space = spaces.Discrete(13)
+        # 2: Min Bet/Raise (NEW)
+        # 3: Bet 10%
+        # 4: Bet 25%
+        # 5: Bet 33%
+        # 6: Bet 50%
+        # 7: Bet 75%
+        # 8: Bet 100%
+        # 9: Bet 125%
+        # 10: Bet 150%
+        # 11: Bet 200%
+        # 12: Bet 300%
+        # 13: All-in
+        self.action_space = spaces.Discrete(14)
         
         self._agent_ids = {"player_0", "player_1"}
         
@@ -326,13 +327,28 @@ class PokerMultiAgentEnv(MultiAgentEnv):
             return Action.fold()
         elif action_idx == 1:
             return Action.check() if to_call == 0 else Action.call(to_call)
-        elif action_idx == 12:
+        elif action_idx == 13: # All-in is now 13
             return Action.all_in(player.chips)
+        elif action_idx == 2:
+            # Min Raise ONLY (No Min Bet)
+            if self.game.current_bet > 0:
+                # Raise to min raise
+                target = self.game.current_bet + self.game.min_raise
+                # Cap at chips
+                max_bet = player.chips + player.bet_this_round
+                if target >= max_bet:
+                    return Action.all_in(player.chips)
+                return Action.raise_to(target)
+            else:
+                # Min-Bet is BANNED.
+                # If this action is selected (despite masking), fallback to Check.
+                # This prevents "Min-Bet" behavior if the mask is ignored.
+                return Action.check()
         else:
             # Percentage bets
-            # 2: 10%, 3: 25%, 4: 33%, 5: 50%, 6: 75%, 7: 100%, 8: 125%, 9: 150%, 10: 200%, 11: 300%
+            # 3: 10%, 4: 25%, 5: 33%, 6: 50%, 7: 75%, 8: 100%, 9: 125%, 10: 150%, 11: 200%, 12: 300%
             pcts = [0.10, 0.25, 0.33, 0.50, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0]
-            pct = pcts[action_idx - 2]
+            pct = pcts[action_idx - 3] # Shifted by 3
             bet_amount = pot * pct
             
             if self.game.current_bet > 0:

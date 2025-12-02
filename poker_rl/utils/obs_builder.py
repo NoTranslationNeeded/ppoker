@@ -88,10 +88,9 @@ class ObservationBuilder:
     @staticmethod
     def _get_legal_actions_mask(game: PokerGame, player_id: int) -> np.ndarray:
         legal = game.get_legal_actions(player_id)
-        mask = np.zeros(13, dtype=np.int8)
+        mask = np.zeros(14, dtype=np.int8)
         
-        # Map Engine ActionTypes to our Discrete(8)
-        # Map Engine ActionTypes to our Discrete(8)
+        # Map Engine ActionTypes to our Discrete(14)
         if ActionType.FOLD in legal:
             # Prevent Open-Folding: If we can check, we should never fold.
             if ActionType.CHECK in legal:
@@ -102,17 +101,28 @@ class ObservationBuilder:
         if ActionType.CHECK in legal or ActionType.CALL in legal: mask[1] = 1
         
         # Smart Masking for Bet/Raise
-        # Only enable mask if the calculated amount is valid (>= min_raise)
         if ActionType.BET in legal or ActionType.RAISE in legal:
             pot = game.get_pot_size()
             player = game.players[player_id]
             current_bet = game.current_bet
             min_raise = game.min_raise
             
-            # 2: 10%, 3: 25%, 4: 33%, 5: 50%, 6: 75%, 7: 100%, 8: 125%, 9: 150%, 10: 200%, 11: 300%
+            # Action 2: Min Raise ONLY
+            # Mask OUT if current_bet == 0 (No Min-Bet allowed)
+            # Enable if current_bet > 0 (Facing bet)
+            if current_bet > 0:
+                min_target = current_bet + min_raise
+                if player.chips + player.bet_this_round >= min_target:
+                    mask[2] = 1
+            else:
+                # Open Pot: Min-Bet is BANNED per user request.
+                mask[2] = 0
+
+            # Percentage Bets (Indices 3-12)
+            # 3: 10%, 4: 25%, 5: 33%, 6: 50%, 7: 75%, 8: 100%, 9: 125%, 10: 150%, 11: 200%, 12: 300%
             pcts = [0.10, 0.25, 0.33, 0.50, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0]
             for i, pct in enumerate(pcts):
-                idx = 2 + i
+                idx = 3 + i
                 amount = pot * pct
                 
                 # Logic from _map_action (simplified for validation)
@@ -126,18 +136,29 @@ class ObservationBuilder:
                     if target >= max_bet:
                         continue
 
+                    # Allow if target >= min_target OR if we have enough chips to cover min_target?
+                    # Actually, if calculated amount < min_raise, we usually mask it.
+                    # BUT, user wants 10% raise to be valid if it auto-corrects?
+                    # "Min-Bet is banned... Min-Raise is kept."
+                    # "Small Pots: 10% Bet should auto-correct to Min-Bet."
+                    # What about 10% Raise?
+                    # If 10% Raise < Min Raise, should it auto-correct to Min Raise?
+                    # User said "Min-Raise is kept".
+                    # If 10% Raise < Min Raise, and we allow it, it becomes Min Raise.
+                    # That duplicates Action 2.
+                    # But Action 2 is explicit Min Raise.
+                    # So maybe we should mask 10% Raise if it's < Min Raise, to force use of Action 2?
+                    # Or just allow it.
+                    # Let's stick to standard logic for Raises: Must be >= Min Raise.
+                    # Because Action 2 exists for exactly that purpose.
                     if target >= min_target:
                         mask[idx] = 1
-                else:
-                    # Bet
-                    # Prevent Redundant All-In: If bet amount >= stack, use All-In action instead
-                    if amount >= player.chips:
-                        continue
-
                     # Min bet is big blind
+                    # Strict Masking: If amount < big_blind, it is MASKED.
+                    # No auto-correction allowed.
                     if amount >= game.big_blind:
                         mask[idx] = 1
                         
-        if ActionType.ALL_IN in legal: mask[12] = 1
+        if ActionType.ALL_IN in legal: mask[13] = 1
         
         return mask

@@ -64,7 +64,7 @@ def train(experiment_name="epsilon", resume=False):
             # PPO specific
             clip_param=0.2,
             lambda_=0.95,
-            entropy_coeff=0.01,
+            entropy_coeff=0.03,
             num_epochs=10,
         )
         .multi_agent(
