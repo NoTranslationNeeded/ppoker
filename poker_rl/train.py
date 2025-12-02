@@ -9,6 +9,7 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 
 import ray
+import torch
 import numpy as np
 from ray import tune
 from ray.rllib.algorithms.ppo import PPOConfig
@@ -70,7 +71,7 @@ def train():
             },
             policy_mapping_fn=lambda agent_id, episode, worker, **kwargs: "main_policy",
         )
-        .resources(num_gpus=1) # Set to 1 if GPU available
+        .resources(num_gpus=1 if torch.cuda.is_available() else 0)
         .env_runners(num_env_runners=4)
         .api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
     )

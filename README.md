@@ -17,11 +17,25 @@
 이 프로젝트는 Python 3.10 이상을 권장합니다.
 
 1.  저장소를 클론합니다.
-2.  필요한 패키지를 설치합니다.
+2.  가상환경을 생성하고 활성화합니다 (권장).
+
+    ```bash
+    # Windows
+    py -3.11 -m venv venv
+    .\venv\Scripts\activate
+    ```
+
+3.  필요한 패키지를 설치합니다.
 
 ```bash
 pip install -r requirements.txt
 ```
+
+> **Note (GPU 사용자)**: GPU 가속을 사용하려면 PyTorch를 CUDA 버전으로 재설치해야 할 수 있습니다:
+> ```bash
+> pip uninstall torch torchvision torchaudio
+> pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+> ```
 
 **주요 의존성:**
 *   `ray[rllib]`: 강화학습 프레임워크
@@ -36,7 +50,7 @@ pip install -r requirements.txt
 프로젝트 루트 디렉토리에서 다음 명령어를 실행하여 학습을 시작합니다.
 
 ```bash
-python poker_rl/train.py
+py poker_rl/train.py
 ```
 
 학습 로그와 체크포인트는 `experiments/logs` 디렉토리에 저장됩니다.
@@ -67,7 +81,6 @@ glacial-supernova/
 
 ## 📖 상세 문서 (Documentation)
 
-프로젝트의 설계 철학, 보상 함수, 관찰 공간(Observation Space) 등 자세한 내용은 [POKER_AI_COMPLETE_GUIDE.md](POKER_AI_COMPLETE_GUIDE.md) 파일을 참고하십시오. 이 문서는 프로젝트의 "Source of Truth" 역할을 합니다.
-
+프로젝트의 설계 철학, 보상 함수, 관찰 공간(Observation Space) 등 자세한 내용은 [POKER_AI_COMPLETE_GUIDE.md](POKER_AI_COMPLETE_GUIDE.md) 파일을 참고하십시오.
 ---
 **Glacial Supernova** - *Cold calculation, Explosive results.*
