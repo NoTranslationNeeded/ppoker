@@ -80,28 +80,6 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         # ⭐ 스택 깊이 분포 (BB 단위)
         # 중요도 기반 샘플링
         self.stack_distribution = {
-            'standard': (80, 120, 0.40),   # 100BB ±20, 40% 확률
-            'middle': (20, 50, 0.30),      # 20-50BB, 30% 확률
-            'short': (5, 20, 0.20),        # 5-20BB, 20% 확률
-            'deep': (150, 250, 0.10)       # 150-250BB, 10% 확률
-        }
-        
-        # Observation: NumPy array (338 floats)
-        # 119: 카드 one-hot
-        # 20: 게임 상태 + Legal Actions Mask
-        # 20: 스트리트별 요약 (Context) ← NEW!
-        # 179: 스트리트별 액션 히스토리 (4×4×11)
-        self.observation_space = spaces.Box(
-            low=0.0,
-            high=2.5,
-            shape=(338,),
-            dtype=np.float32
-        )
-        
-        # Action: Discrete(8)
-        self.action_space = spaces.Discrete(8)
-        
-        # Multi-agent 설정
         self._agent_ids = {"player_0", "player_1"}
     
     def _sample_stack_depth(self) -> float:
@@ -557,19 +535,6 @@ Input(310) → LSTM(256) → FC
 # ✅ 올바른 순서
 Input(310) → FC(256) → LSTM(256)
 장점:
-- FC가 특징 추출: One-hot → Abstract features
-- LSTM은 압축된 특징의 시간적 흐름만 처리
-- 효율적이고 빠름
-```
-
-**RLlib 구현** (자동 FC 추가!):
-            "fcnet_hiddens": [256, 256],  # ⭐ FC(256) → FC(256)
-            "fcnet_activation": "relu",
-            
-            # 2. LSTM 설정
-            "use_lstm": True,              # ⭐ LSTM 활성화
-            "lstm_cell_size": 256,         # Hidden state 크기
-            
             # 3. 시퀀스 길이
             #    포커 한 핸드 = 보통 10~30 액션
             #    20이면 충분하고 효율적

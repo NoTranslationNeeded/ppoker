@@ -140,38 +140,6 @@ def step(self, action_dict):
         # 종료: 둘 다
         return {
             "player_0": obs0,
-            "player_1": obs1
-        }, reward_dict, {"__all__": True}, {}
-```
-
-### 관찰 공간
-
-**크기**: 338 차원
-
-**구조**:
-1. **카드 One-Hot (0-118)**: 119 차원
-   - Hole cards: 34 차원
-   - Community: 85 차원
-   - Rank(13) + Suit(4) = 17차원/카드
-
-2. **게임 상태 (119-138)**: 20 차원
-   - Stacks, Pot, Bets (정규화: /250)
-   - Position, Street, Pot Odds, SPR
-   - **Legal Actions Mask (8차원)**
-
-3. **스트리트 컨텍스트 (139-158)**: 20 차원 ← NEW!
-   - 4 streets × 5 dims
-   - 5 dims = Aggressor(2) + Raises(1) + Investment(2)
-   - "누가 먼저 쳤나?", "얼마나 격렬했나?" 요약
-
-4. **액션 히스토리 (159-337)**: 179 차원
-   - 4 streets × 4 actions × 11 dims
-   - 11 dims = Action(8) + Player(2) + BetRatio(1)
-
-**제거된 특징** (토너먼트 유물):
-- ❌ Tournament Progress (항상 0)
-- ❌ Hand Progress (카드로 충분)
-- ❌ Blind Level (BB 고정 = 상수)
 
 ### 액션 공간
 
@@ -331,48 +299,6 @@ if not success:
 **RLlib 구현**:
 ```python
 config = (
-    PPOConfig()
-    .environment("poker_env")
-    .framework("torch")
-    .training(
-        model={
-            # FC (자동으로 LSTM 앞에)
-            "fcnet_hiddens": [256, 256],
-            "fcnet_activation": "relu",
-            
-            # LSTM
-            "use_lstm": True,
-            "lstm_cell_size": 256,
-            "max_seq_len": 20,
-            
-            # 이전 정보
-            "lstm_use_prev_action": True,
-            "lstm_use_prev_reward": True,
-            
-            # Action Masking
-            "custom_model": MaskedLSTM
-        }
-    )
-)
-```
-
-**특징 추출 과정**:
-```
-Step 1: Raw Input (310)
-  [0,1,0,...,0.75,...]
-
-Step 2: FC1 (256)
-  "Flush 가능성, 공격적 스타일"
-
-Step 3: FC2 (256)
-  feature[0] = 0.91  # 핸드 강도
-  feature[1] = 0.15  # 보드 위험
-  
-Step 4: LSTM
-  "강했다 → 약해짐 → 폴드!"
-```
-
-**Inference 시 State 관리**:
 ```python
 # 핸드 시작
 lstm_state_0 = algo.get_initial_state()
