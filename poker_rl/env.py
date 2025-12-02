@@ -73,7 +73,7 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         self.observation_space = spaces.Dict({
             "observations": spaces.Box(
                 low=0.0,
-                high=2.5,
+                high=200.0,
                 shape=(150,),
                 dtype=np.float32
             ),
@@ -159,11 +159,15 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         }
         
         # Logging for debug
+        # Decide logging status at start of hand (prob 1/10000)
+        self.should_log_this_hand = np.random.random() < 0.0001
         self.hand_logs = []
-        self.hand_logs.append(f"\n=== Hand Start (Dealer: P{self.button}) ===")
-        self.hand_logs.append(f"Stacks: P0={self.chips[0]:.1f}, P1={self.chips[1]:.1f}")
-        self.hand_logs.append(f"Hole Cards P0: {[str(c) for c in self.game.players[0].hand]}")
-        self.hand_logs.append(f"Hole Cards P1: {[str(c) for c in self.game.players[1].hand]}")
+        
+        if self.should_log_this_hand:
+            self.hand_logs.append(f"\n=== Hand Start (Dealer: P{self.button}) ===")
+            self.hand_logs.append(f"Stacks: P0={self.chips[0]:.1f}, P1={self.chips[1]:.1f}")
+            self.hand_logs.append(f"Hole Cards P0: {[str(c) for c in self.game.players[0].hand]}")
+            self.hand_logs.append(f"Hole Cards P1: {[str(c) for c in self.game.players[1].hand]}")
         
         current_player = self.game.get_current_player()
         
@@ -235,8 +239,17 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         self._record_action(action_idx, current_player, real_bet, pot_before, street_before)
         
         # Log action
+        # Log action
         action_str = f"Street: {street_before}, P{current_player} {engine_action} [Action: {action_idx}] (Pot: {pot_before:.1f})"
-        self.hand_logs.append(action_str)
+        
+        if self.should_log_this_hand:
+            # Calculate features for the acting player to log context
+            from poker_rl.utils.equity_calculator import get_8_features
+            player_hand = self.game.players[current_player].hand
+            feats = get_8_features(player_hand, self.game.community_cards, street_before)
+            hs, ppot, npot, hidx = feats[:4]
+            action_str += f" | P{current_player}_Feat: [HS={hs:.2f} PPot={ppot:.2f} NPot={npot:.2f} HIdx={int(hidx)}]"
+            self.hand_logs.append(action_str)
         
         # Check if hand is over
         if self.game.is_hand_over:
@@ -274,9 +287,8 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         reward_dict["player_1"] = float(-p0_reward) # Zero-sum
         
         # Occasional logging
-        # train_batch_size=32768 steps. Avg steps/hand ~4-5. -> ~8000 hands/batch.
-        # To log once per 4000 hands, prob should be 1/4000 = 0.00025
-        if np.random.random() < 0.00025:
+        # Use the flag decided at reset
+        if self.should_log_this_hand:
             # Get 8 advanced features for both players
             from poker_rl.utils.equity_calculator import get_8_features, get_hand_name_from_index
             

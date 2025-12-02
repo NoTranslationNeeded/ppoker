@@ -11,7 +11,7 @@ Provides functions to calculate:
 import json
 import os
 import random
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
 import sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -245,19 +245,38 @@ def calculate_ppot_npot(hole_cards: List[Card], board: List[Card],
     return ppot, npot
 
 def get_8_features(hole_cards: List[Card], board: List[Card], 
-                  street: str) -> List[float]:
+                  street: Union[str, int]) -> List[float]:
     """
     Get all 8 features for observation vector
     
     Args:
         hole_cards: 2 hole cards
         board: Community cards (0-5 cards)
-        street: 'preflop', 'flop', 'turn', or 'river'
+        street: 'preflop', 'flop', 'turn', 'river', or int 0-3
     
     Returns:
         List of 8 floats:
         [hs/equity, ppot/0, npot/0, hand_index_norm, is_pre, is_flop, is_turn, is_river]
     """
+    # Normalize street to string if it's an integer or enum
+    # DEBUG: Print street value to identify the issue
+    # print(f"DEBUG: get_8_features street={street} type={type(street)}")
+    
+    # Handle float (e.g. 0.0) by converting to int
+    if isinstance(street, float):
+        street = int(street)
+
+    if isinstance(street, int):
+        street_map = {0: 'preflop', 1: 'flop', 2: 'turn', 3: 'river'}
+        street = street_map.get(street, 'preflop')
+    else:
+        # Ensure lowercase string
+        street = str(street).lower()
+        if 'preflop' in street: street = 'preflop'
+        elif 'flop' in street: street = 'flop'
+        elif 'turn' in street: street = 'turn'
+        elif 'river' in street or 'showdown' in street: street = 'river'
+
     # Street one-hot (mutually exclusive using if-elif)
     if street == 'preflop':
         is_preflop, is_flop, is_turn, is_river = 1.0, 0.0, 0.0, 0.0
@@ -339,4 +358,3 @@ def get_8_features(hole_cards: List[Card], board: List[Card],
                     is_preflop, is_flop, is_turn, is_river]
         
         return features
-
