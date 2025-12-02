@@ -59,6 +59,12 @@ pip install -r requirements.txt
 .\venv\Scripts\python poker_rl/train.py --name my_experiment_v1
 ```
 
+**학습 이어하기 (Resume):**
+중단된 학습을 이어서 진행하려면 `--resume` 옵션을 사용하세요. 기존 체크포인트를 불러와서 학습을 재개합니다.
+```bash
+.\venv\Scripts\python poker_rl/train.py --name epsilon --resume
+```
+
 학습 로그와 체크포인트는 `experiments/logs` 디렉토리에 저장됩니다.
 
 ### 학습 모니터링 (Monitoring)

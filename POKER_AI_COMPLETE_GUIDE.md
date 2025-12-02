@@ -133,31 +133,6 @@ def step(self, action_dict):
         next_player = self.game.get_current_player()
         return {
             f"player_{next_player}": obs
-        }, {
-            f"player_{next_player}": 0.0
-        }, {"__all__": False}, {}
-    else:
-        # 종료: 둘 다
-        return {
-            "player_0": obs0,
-
-### 액션 공간
-
-**8개 이산 액션**:
-```
-0: Fold
-1: Check/Call
-2: Bet 33%
-3: Bet 50% ← NEW!
-4: Bet 75%
-5: Bet 100%
-6: Bet 150%
-7: All-in
-```
-
-**변경 이유**:
-- 33%-75% 갭 해소
-- 50% 팟벳은 포커에서 매우 흔함 (표준 C-bet)
 - 더 세밀한 베팅 컨트롤
 
 ### Min-Raise 처리 ⭐

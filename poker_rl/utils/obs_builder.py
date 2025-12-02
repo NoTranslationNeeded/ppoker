@@ -88,11 +88,17 @@ class ObservationBuilder:
     @staticmethod
     def _get_legal_actions_mask(game: PokerGame, player_id: int) -> np.ndarray:
         legal = game.get_legal_actions(player_id)
-        mask = np.zeros(8, dtype=np.int8)
+        mask = np.zeros(13, dtype=np.int8)
         
         # Map Engine ActionTypes to our Discrete(8)
         # Map Engine ActionTypes to our Discrete(8)
-        if ActionType.FOLD in legal: mask[0] = 1
+        if ActionType.FOLD in legal:
+            # Prevent Open-Folding: If we can check, we should never fold.
+            if ActionType.CHECK in legal:
+                mask[0] = 0
+            else:
+                mask[0] = 1
+                
         if ActionType.CHECK in legal or ActionType.CALL in legal: mask[1] = 1
         
         # Smart Masking for Bet/Raise
@@ -103,7 +109,8 @@ class ObservationBuilder:
             current_bet = game.current_bet
             min_raise = game.min_raise
             
-            pcts = [0.33, 0.50, 0.75, 1.0, 1.5]
+            # 2: 10%, 3: 25%, 4: 33%, 5: 50%, 6: 75%, 7: 100%, 8: 125%, 9: 150%, 10: 200%, 11: 300%
+            pcts = [0.10, 0.25, 0.33, 0.50, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0]
             for i, pct in enumerate(pcts):
                 idx = 2 + i
                 amount = pot * pct
@@ -114,21 +121,23 @@ class ObservationBuilder:
                     target = current_bet + amount
                     min_target = current_bet + min_raise
                     
-                    # If target is less than min_raise, it's invalid unless it's an all-in (which is handled by index 7)
-                    # However, _map_action forces it to min_raise.
-                    # But we want to mask it if the INTENT (33%) results in an invalid amount.
-                    # If 33% pot < min_raise, then 33% bet is effectively a min-raise or invalid.
-                    # If we mask it, the agent is forced to choose a higher percentage or fold/call.
-                    # This prevents "I bet 33%" resulting in "You Min-Raised".
-                    
+                    # Prevent Redundant All-In: If raise amount >= stack, use All-In action instead
+                    max_bet = player.chips + player.bet_this_round
+                    if target >= max_bet:
+                        continue
+
                     if target >= min_target:
                         mask[idx] = 1
                 else:
                     # Bet
+                    # Prevent Redundant All-In: If bet amount >= stack, use All-In action instead
+                    if amount >= player.chips:
+                        continue
+
                     # Min bet is big blind
                     if amount >= game.big_blind:
                         mask[idx] = 1
                         
-        if ActionType.ALL_IN in legal: mask[7] = 1
+        if ActionType.ALL_IN in legal: mask[12] = 1
         
         return mask

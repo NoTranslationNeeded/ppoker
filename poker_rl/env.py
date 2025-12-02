@@ -80,21 +80,26 @@ class PokerMultiAgentEnv(MultiAgentEnv):
             "action_mask": spaces.Box(
                 low=0.0,
                 high=1.0,
-                shape=(8,),
+                shape=(13,),
                 dtype=np.float32
             )
         })
         
-        # Action Space: Discrete(8)
+        # Action Space: Discrete(13)
         # 0: Fold
         # 1: Check/Call
-        # 2: Bet 33%
-        # 3: Bet 50%
-        # 4: Bet 75%
-        # 5: Bet 100%
-        # 6: Bet 150%
-        # 7: All-in
-        self.action_space = spaces.Discrete(8)
+        # 2: Bet 10%
+        # 3: Bet 25%
+        # 4: Bet 33%
+        # 5: Bet 50%
+        # 6: Bet 75%
+        # 7: Bet 100%
+        # 8: Bet 125%
+        # 9: Bet 150%
+        # 10: Bet 200%
+        # 11: Bet 300%
+        # 12: All-in
+        self.action_space = spaces.Discrete(13)
         
         self._agent_ids = {"player_0", "player_1"}
         
@@ -229,7 +234,7 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         self._record_action(action_idx, current_player, real_bet, pot_before, street_before)
         
         # Log action
-        action_str = f"Street: {street_before}, P{current_player} {engine_action} (Pot: {pot_before:.1f})"
+        action_str = f"Street: {street_before}, P{current_player} {engine_action} [Action: {action_idx}] (Pot: {pot_before:.1f})"
         self.hand_logs.append(action_str)
         
         # Check if hand is over
@@ -321,11 +326,12 @@ class PokerMultiAgentEnv(MultiAgentEnv):
             return Action.fold()
         elif action_idx == 1:
             return Action.check() if to_call == 0 else Action.call(to_call)
-        elif action_idx == 7:
+        elif action_idx == 12:
             return Action.all_in(player.chips)
         else:
             # Percentage bets
-            pcts = [0.33, 0.50, 0.75, 1.0, 1.5]
+            # 2: 10%, 3: 25%, 4: 33%, 5: 50%, 6: 75%, 7: 100%, 8: 125%, 9: 150%, 10: 200%, 11: 300%
+            pcts = [0.10, 0.25, 0.33, 0.50, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0]
             pct = pcts[action_idx - 2]
             bet_amount = pot * pct
             

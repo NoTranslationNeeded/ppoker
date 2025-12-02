@@ -30,7 +30,7 @@ def env_creator(config):
 
 import argparse
 
-def train(experiment_name="epsilon"):
+def train(experiment_name="epsilon", resume=False):
     # Initialize Ray with runtime_env to suppress warnings in all actors
     ray.init(runtime_env={"env_vars": {"PYTHONWARNINGS": "ignore"}})
     
@@ -74,21 +74,39 @@ def train(experiment_name="epsilon"):
             policy_mapping_fn=lambda agent_id, episode, worker, **kwargs: "main_policy",
         )
         .resources(num_gpus=1 if torch.cuda.is_available() else 0)
-        .env_runners(num_env_runners=4)
+        .env_runners(num_env_runners=4, sample_timeout_s=300) # Increased timeout to 300s
         .api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
     )
     
     # Run training
     print(f"Starting training (Experiment: {experiment_name})...")
-    tuner = tune.Tuner(
-        "PPO",
-        param_space=config.to_dict(),
-        run_config=tune.RunConfig(
-            stop={"training_iteration": 1000}, # Run for 1000 iterations
-            storage_path=os.path.abspath("experiments/logs"),
-            name=experiment_name,
-        ),
-    )
+    storage_path = os.path.abspath("experiments/logs")
+    
+    if resume:
+        experiment_path = os.path.join(storage_path, experiment_name)
+        print(f"Resuming experiment from: {experiment_path}")
+        
+        if not os.path.exists(experiment_path):
+            print(f"Error: Experiment path {experiment_path} does not exist. Cannot resume.")
+            return
+
+        tuner = tune.Tuner.restore(
+            path=experiment_path,
+            trainable="PPO",
+            resume_unfinished=True,
+            resume_errored=True,
+            restart_errored=True
+        )
+    else:
+        tuner = tune.Tuner(
+            "PPO",
+            param_space=config.to_dict(),
+            run_config=tune.RunConfig(
+                stop={"training_iteration": 1000}, # Run for 1000 iterations
+                storage_path=storage_path,
+                name=experiment_name,
+            ),
+        )
     
     results = tuner.fit()
     print("Training completed.")
@@ -106,6 +124,7 @@ def train(experiment_name="epsilon"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Poker AI using Ray RLlib")
     parser.add_argument("--name", type=str, default="epsilon", help="Name of the experiment (default: epsilon)")
+    parser.add_argument("--resume", action="store_true", help="Resume training from existing checkpoint")
     args = parser.parse_args()
     
-    train(experiment_name=args.name)
+    train(experiment_name=args.name, resume=args.resume)
