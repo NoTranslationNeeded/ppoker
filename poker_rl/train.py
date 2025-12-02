@@ -28,7 +28,9 @@ def env_creator(config):
     warnings.filterwarnings("ignore", category=DeprecationWarning)
     return PokerMultiAgentEnv(config)
 
-def train():
+import argparse
+
+def train(experiment_name="epsilon"):
     # Initialize Ray with runtime_env to suppress warnings in all actors
     ray.init(runtime_env={"env_vars": {"PYTHONWARNINGS": "ignore"}})
     
@@ -77,14 +79,14 @@ def train():
     )
     
     # Run training
-    print("Starting training...")
+    print(f"Starting training (Experiment: {experiment_name})...")
     tuner = tune.Tuner(
         "PPO",
         param_space=config.to_dict(),
         run_config=tune.RunConfig(
             stop={"training_iteration": 1000}, # Run for 1000 iterations
             storage_path=os.path.abspath("experiments/logs"),
-            name="epsilon",
+            name=experiment_name,
         ),
     )
     
@@ -102,4 +104,8 @@ def train():
         print("Could not find episode_reward_mean in metrics.")
 
 if __name__ == "__main__":
-    train()
+    parser = argparse.ArgumentParser(description="Train Poker AI using Ray RLlib")
+    parser.add_argument("--name", type=str, default="epsilon", help="Name of the experiment (default: epsilon)")
+    args = parser.parse_args()
+    
+    train(experiment_name=args.name)

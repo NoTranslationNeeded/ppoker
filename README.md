@@ -50,7 +50,13 @@ pip install -r requirements.txt
 프로젝트 루트 디렉토리에서 다음 명령어를 실행하여 학습을 시작합니다.
 
 ```bash
-py poker_rl/train.py
+.\venv\Scripts\python poker_rl/train.py
+```
+
+**실험 이름 지정 (선택 사항):**
+기본적으로 `epsilon`이라는 이름으로 저장됩니다. 다른 이름으로 저장하려면 `--name` 옵션을 사용하세요:
+```bash
+.\venv\Scripts\python poker_rl/train.py --name my_experiment_v1
 ```
 
 학습 로그와 체크포인트는 `experiments/logs` 디렉토리에 저장됩니다.
