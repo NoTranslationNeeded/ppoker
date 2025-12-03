@@ -74,7 +74,7 @@ class PokerMultiAgentEnv(MultiAgentEnv):
             "observations": spaces.Box(
                 low=0.0,
                 high=200.0,
-                shape=(150,),
+                shape=(176,),  # Updated from 150 to 176
                 dtype=np.float32
             ),
             "action_mask": spaces.Box(
@@ -154,7 +154,6 @@ class PokerMultiAgentEnv(MultiAgentEnv):
             'preflop': [],
             'flop': [],
             'turn': [],
-            'turn': [],
             'river': []
         }
         
@@ -175,8 +174,8 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         # CRITICAL: Return obs for BOTH players so RLlib initializes both agents.
         # Even if only one acts, the other needs to be "in" the episode to get rewards.
         obs_dict = {
-            "player_0": ObservationBuilder.get_observation(self.game, 0, self.action_history),
-            "player_1": ObservationBuilder.get_observation(self.game, 1, self.action_history)
+            "player_0": ObservationBuilder.get_observation(self.game, 0, self.action_history, self.hand_start_stacks),
+            "player_1": ObservationBuilder.get_observation(self.game, 1, self.action_history, self.hand_start_stacks)
         }
         info_dict = {}
         
@@ -258,7 +257,7 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         # Prepare next step
         next_player = self.game.get_current_player()
         
-        obs_dict = {f"player_{next_player}": ObservationBuilder.get_observation(self.game, next_player, self.action_history)}
+        obs_dict = {f"player_{next_player}": ObservationBuilder.get_observation(self.game, next_player, self.action_history, self.hand_start_stacks)}
         reward_dict = {f"player_{next_player}": 0.0} # No intermediate rewards
         terminated_dict = {"__all__": False}
         truncated_dict = {"__all__": False}
@@ -348,8 +347,8 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         # CRITICAL FIX: Must return observations for ALL agents at termination
         # otherwise RLlib might drop the reward for the agent that didn't act in the last step.
         obs_dict = {
-            "player_0": ObservationBuilder.get_observation(self.game, 0, self.action_history),
-            "player_1": ObservationBuilder.get_observation(self.game, 1, self.action_history)
+            "player_0": ObservationBuilder.get_observation(self.game, 0, self.action_history, self.hand_start_stacks),
+            "player_1": ObservationBuilder.get_observation(self.game, 1, self.action_history, self.hand_start_stacks)
         }
         truncated_dict = {"__all__": False}
         info_dict = {}
@@ -416,6 +415,7 @@ class PokerMultiAgentEnv(MultiAgentEnv):
     # _get_legal_actions_mask removed (DRY)
 
     def _record_action(self, action_idx: int, player_id: int, bet_amount: float, pot_before: float, street: str):
+        """Record action with both ratio and actual amount for accurate tracking"""
         if pot_before > 0:
             bet_ratio = bet_amount / pot_before
         else:
@@ -423,5 +423,7 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         bet_ratio = np.clip(bet_ratio, 0.0, 2.5)
         
         if street in self.action_history:
-            self.action_history[street].append((action_idx, player_id, bet_ratio))
+            # Tuple structure: (action_idx, player_id, bet_ratio, bet_amount)
+            # Extended from 3 to 4 elements for accurate investment tracking
+            self.action_history[street].append((action_idx, player_id, bet_ratio, bet_amount))
 
