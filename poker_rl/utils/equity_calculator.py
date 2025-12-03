@@ -12,6 +12,7 @@ import json
 import os
 import random
 from typing import List, Tuple, Union
+from functools import lru_cache
 
 import sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -145,18 +146,18 @@ def get_hand_strength_postflop(hole_cards: List[Card], board: List[Card]) -> flo
     return min(1.0, max(0.0, score / 10_000_000.0))
 
 def calculate_ppot_npot(hole_cards: List[Card], board: List[Card], 
-                       num_opponent_samples: int = 10) -> Tuple[float, float]:
+                       num_opponent_samples: int = 50) -> Tuple[float, float]:
     """
     Calculate Positive and Negative Potential using Monte Carlo sampling
     
     Strategy:
-    - Sample 10 random opponent hands (uncertainty estimation)
+    - Sample 50 random opponent hands (uncertainty estimation)
     - For each opponent hand, simulate all 46 possible next cards (full enumeration)
     
     Args:
         hole_cards: 2 hole cards
         board: Community cards (3-4 cards, not 5)
-        num_opponent_samples: Number of opponent hands to sample (default 10)
+        num_opponent_samples: Number of opponent hands to sample (default 50)
     
     Returns:
         (ppot, npot) - both in range 0-1
@@ -259,9 +260,6 @@ def get_8_features(hole_cards: List[Card], board: List[Card],
         [hs/equity, ppot/0, npot/0, hand_index_norm, is_pre, is_flop, is_turn, is_river]
     """
     # Normalize street to string if it's an integer or enum
-    # DEBUG: Print street value to identify the issue
-    # print(f"DEBUG: get_8_features street={street} type={type(street)}")
-    
     # Handle float (e.g. 0.0) by converting to int
     if isinstance(street, float):
         street = int(street)
@@ -358,3 +356,15 @@ def get_8_features(hole_cards: List[Card], board: List[Card],
                     is_preflop, is_flop, is_turn, is_river]
         
         return features
+
+@lru_cache(maxsize=200000)
+def get_8_features_cached(hole_tuple, board_tuple, street):
+    """
+    Cached version of get_8_features to speed up training.
+    Inputs must be tuples of (suit, rank) to be hashable.
+    """
+    # Convert tuples back to Card objects
+    hole_cards = [Card(suit, rank) for (suit, rank) in hole_tuple]
+    board = [Card(suit, rank) for (suit, rank) in board_tuple]
+    
+    return get_8_features(hole_cards, board, street)

@@ -60,7 +60,7 @@ def train(experiment_name="epsilon", resume=False):
                 },
                 "max_seq_len": 20, # Length of history to train on
             },
-            train_batch_size=32768, # Increased to >30000 as requested
+            train_batch_size=65536, # Increased to 65536 for RTX 4060 Ti
             gamma=0.99,
             lr=3e-4,
             # PPO specific
@@ -76,7 +76,7 @@ def train(experiment_name="epsilon", resume=False):
             policy_mapping_fn=lambda agent_id, episode, worker, **kwargs: "main_policy",
         )
         .resources(num_gpus=1 if torch.cuda.is_available() else 0)
-        .env_runners(num_env_runners=4, sample_timeout_s=300) # Increased timeout to 300s
+        .env_runners(num_env_runners=6, sample_timeout_s=300) # Reduced to 6 for stability
         .api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
     )
     
