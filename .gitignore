@@ -10,6 +10,8 @@ venv/
 .venv
 pip-log.txt
 pip-delete-this-directory.txt
+*.egg-info/
+.pytest_cache/
 
 # Ray / RLlib
 ray_results/
@@ -19,6 +21,10 @@ mlruns/
 *.log
 poker_games.log
 training_status.txt
+
+# Temporary evaluation/test files
+평가.txt
+test_*.txt
 
 # IDE
 .vscode/

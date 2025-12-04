@@ -228,15 +228,11 @@ class ObservationBuilder:
         ]
         
         # 4. Expert features (135-142) - Use ORIGINAL Card objects!
-        from .equity_calculator import get_8_features_cached
+        from .equity_calculator import get_8_features
         
-        # Convert to tuples for caching (hashable)
-        hole_tuple = tuple((c.suit, c.rank) for c in hole_cards_original)
-        board_tuple = tuple((c.suit, c.rank) for c in board_original)
-        
-        advanced_features = get_8_features_cached(
-            hole_tuple,
-            board_tuple,
+        advanced_features = get_8_features(
+            hole_cards_original,
+            board_original,
             game.street.value
         )
         obs_vec[135:143] = advanced_features

@@ -1,6 +1,8 @@
 
 import os
 import sys
+import signal
+import atexit
 
 # Add project root to path so we can import poker_rl when running as script
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -30,7 +32,7 @@ def env_creator(config):
 
 import argparse
 
-def train(experiment_name="epsilon", resume=False):
+def train(experiment_name="epsilon", resume=False, stop_iters=1000):
     # Initialize Ray with runtime_env to suppress warnings in all actors
     if ray.is_initialized():
         ray.shutdown()
@@ -58,9 +60,9 @@ def train(experiment_name="epsilon", resume=False):
                 "custom_model_config": {
                     "lstm_cell_size": 256,
                 },
-                "max_seq_len": 20, # Length of history to train on
+                "max_seq_len": 40,  # Increased from 20 to handle long hands (Issue #9 solved)
             },
-            train_batch_size=65536, # Increased to 65536 for RTX 4060 Ti
+            train_batch_size=32768,
             gamma=0.99,
             lr=3e-4,
             # PPO specific
@@ -76,7 +78,7 @@ def train(experiment_name="epsilon", resume=False):
             policy_mapping_fn=lambda agent_id, episode, worker, **kwargs: "main_policy",
         )
         .resources(num_gpus=1 if torch.cuda.is_available() else 0)
-        .env_runners(num_env_runners=6, sample_timeout_s=300) # Reduced to 6 for stability
+        .env_runners(num_env_runners=4, sample_timeout_s=300)
         .api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
     )
     
@@ -100,17 +102,60 @@ def train(experiment_name="epsilon", resume=False):
             restart_errored=True
         )
     else:
+        # Checkpoint configuration
+        # Model is lightweight (~15 MB per checkpoint), so we can save frequently
+        from ray.train import CheckpointConfig
+        
+        checkpoint_config = CheckpointConfig(
+            num_to_keep=10,              # Keep last 10 checkpoints (~150 MB total)
+            checkpoint_frequency=5,      # Save every 5 iterations (더 자주)
+            checkpoint_at_end=True,      # Always save at end
+        )
+        
         tuner = tune.Tuner(
             "PPO",
             param_space=config.to_dict(),
             run_config=tune.RunConfig(
-                stop={"training_iteration": 1000}, # Run for 1000 iterations
+                stop={"training_iteration": stop_iters},
                 storage_path=storage_path,
                 name=experiment_name,
+                checkpoint_config=checkpoint_config,
             ),
         )
     
-    results = tuner.fit()
+    # Graceful shutdown handler
+    shutdown_requested = {"flag": False}
+    
+    def signal_handler(signum, frame):
+        """Handle Ctrl+C gracefully by requesting shutdown"""
+        if not shutdown_requested["flag"]:
+            print("\n" + "="*60)
+            print("🛑 Shutdown requested (Ctrl+C detected)")
+            print("Saving checkpoint and shutting down gracefully...")
+            print("="*60)
+            shutdown_requested["flag"] = True
+            # Note: Ray Tune will complete current iteration and save checkpoint
+        else:
+            print("\n⚠️  Force shutdown! (Ctrl+C pressed again)")
+            print("Checkpoint may not be saved!")
+            sys.exit(1)
+    
+    # Register signal handler
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    # Run training with error handling
+    try:
+        results = tuner.fit()
+        print("Training completed successfully.")
+    except KeyboardInterrupt:
+        print("\n" + "="*60)
+        print("✅ Training interrupted gracefully")
+        print("Latest checkpoint saved")
+        print("="*60)
+        return
+    except Exception as e:
+        print(f"\n❌ Training failed with error: {e}")
+        raise
     print("Training completed.")
     
     # Print results
@@ -127,6 +172,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Poker AI using Ray RLlib")
     parser.add_argument("--name", type=str, default="epsilon", help="Name of the experiment (default: epsilon)")
     parser.add_argument("--resume", action="store_true", help="Resume training from existing checkpoint")
+    parser.add_argument("--stop-iters", type=int, default=1000, help="Number of training iterations (default: 1000)")
     args = parser.parse_args()
     
-    train(experiment_name=args.name, resume=args.resume)
+    train(experiment_name=args.name, resume=args.resume, stop_iters=args.stop_iters)

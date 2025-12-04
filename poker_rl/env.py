@@ -52,29 +52,52 @@ class PokerMultiAgentEnv(MultiAgentEnv):
             'deep': (150, 250, 0.10)       # 150-250BB, 10%
         }
         
-        # Observation Space (338 floats)
-        # 119: Card One-Hot (7 cards * 17 dims) -> Wait, 2 hole + 5 community = 7 cards. 7 * 17 = 119.
-        # 31: Game State
-        # 160: Action History (4 streets * 4 actions * 10 dims)
-        # Total: 119 + 31 + 160 = 310?
-        # Plan says 338. Let's re-calculate based on plan.
-        # Plan: 
-        # 119: Card one-hot
-        # 20: Game State + Mask? No, Plan says "20: Game State + Legal Actions Mask" then "20: Street Context".
-        # Let's stick to the detailed breakdown in Plan:
-        # Obs[0:119]: Cards (2 hole + 5 community) * 17 = 119
-        # Obs[119:150]: Game State (31 floats)
-        # Obs[150:310]: Action History (4 streets * 4 actions * 10 dims = 160)
-        # Total: 119 + 31 + 160 = 310.
-        # The plan mentioned 338 in one place but 310 in another. I will go with 310 as it sums up correctly.
+        # =================================================================
+        # OBSERVATION SPACE: 176 Dimensions (+ 14 Action Mask)
+        # =================================================================
+        # STRUCTURE BREAKDOWN:
+        #
+        # [0-118]   Cards (7 cards × 17 one-hot)           = 119 dims
+        #           - 2 hole cards + 5 community cards
+        #           - Each card: 13 ranks + 4 suits
+        #
+        # [119-134] Game State (normalized)                = 16 dims
+        #           - My chips, Opp chips, Pot, Current bet
+        #           - Bets this round, Call amount
+        #           - Button position, Street (0/0.33/0.66/1.0)
+        #           - Pot odds, SPR, ...
+        #
+        # [135-142] Hand Strength Features                 = 8 dims
+        #           - HS/Equity, PPot, NPot, Hand Index
+        #           - Street one-hot (preflop/flop/turn/river)
+        #
+        # [143-149] Padding (reserved for future)          = 7 dims
+        #
+        # [150-165] Street History Context                 = 16 dims
+        #           - Per-street summary (4 streets × 4 features)
+        #           - Raises count, Aggressor, Investment, 3-bet flag
+        #
+        # [166-171] Current Street Context                 = 6 dims
+        #           - Actions count, I raised, Opp raised
+        #           - Passive→Aggressive, Donk bet, Last action
+        #
+        # [172-173] Investment Features                    = 2 dims
+        #           - Total investment (log-scaled)
+        #           - Investment ratio (0-1)
+        #
+        # [174-175] Position Features                      = 2 dims
+        #           - Position value (0=OOP, 1=IP)
+        #           - Permanent advantage (postflop)
+        #
+        # TOTAL: 119 + 16 + 8 + 7 + 16 + 6 + 2 + 2 = 176 ✓
+        # =================================================================
         
-        # Observation Space
-        # Dict space for Action Masking
+        # Observation Space: Dict for Action Masking
         self.observation_space = spaces.Dict({
             "observations": spaces.Box(
                 low=0.0,
                 high=200.0,
-                shape=(176,),  # Updated from 150 to 176
+                shape=(176,),
                 dtype=np.float32
             ),
             "action_mask": spaces.Box(
@@ -112,6 +135,10 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         self.hand_count = 0
         self.max_hands = 1000 # Prevent infinite loops
         
+        # Delta-Equity Reward state
+        self.potential_states = {}  # {player_id: PotentialState}
+        self.gamma = 0.99  # Discount factor for intermediate rewards
+        
     def _sample_stack_depth(self) -> float:
         """Sample stack depth based on distribution"""
         categories = ['standard', 'middle', 'short', 'deep']
@@ -122,6 +149,45 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         
         stack_bb = np.random.uniform(min_bb, max_bb)
         return stack_bb * self.big_blind
+    
+    def _sample_stacks(self):
+        """
+        Effective Stack-based Sampling
+        
+        Strategy:
+        - Sample effective stack (determines actual strategy)
+        - 50% chance: Equal stacks (Cash Game style)
+        - 50% chance: Asymmetric stacks (Tournament style)
+        
+        Benefits:
+        - Learns all effective stack depths (5BB ~ 200BB)
+        - Maintains asymmetric situation capability (Chip Leader bullying)
+        - Reduces redundant sampling (50% less duplicate effective stacks)
+        
+        Returns:
+            [stack_p0, stack_p1]
+        """
+        # 1. Sample effective stack (the strategic reference point)
+        eff_stack = self._sample_stack_depth()
+        
+        # 2. 50% symmetric, 50% asymmetric
+        if np.random.random() < 0.5:
+            # Cash Game style: Equal stacks
+            stack_p0 = eff_stack
+            stack_p1 = eff_stack
+        else:
+            # Tournament style: Deep vs Short
+            # One player has effective stack, other has 1.5-5x more
+            # (Allows learning Chip Leader pressure tactics)
+            deep_stack = eff_stack * np.random.uniform(1.5, 5.0)
+            
+            # Randomly assign who gets deep stack
+            if np.random.random() < 0.5:
+                stack_p0, stack_p1 = eff_stack, deep_stack
+            else:
+                stack_p0, stack_p1 = deep_stack, eff_stack
+        
+        return [stack_p0, stack_p1]
 
     def reset(self, *, seed=None, options=None):
         if seed is not None:
@@ -129,11 +195,8 @@ class PokerMultiAgentEnv(MultiAgentEnv):
             
         self.hand_count = 0
         
-        # Sample stacks
-        self.chips = [
-            self._sample_stack_depth(),
-            self._sample_stack_depth()
-        ]
+        # Sample stacks (Effective Stack-based)
+        self.chips = self._sample_stacks()
         self.hand_start_stacks = list(self.chips)
         
         # Randomize button
@@ -162,11 +225,28 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         self.should_log_this_hand = np.random.random() < 0.0001
         self.hand_logs = []
         
+        # Reward tracking per hand
+        self.hand_rewards = {
+            0: {"intermediate": 0.0, "terminal": 0.0, "total": 0.0},
+            1: {"intermediate": 0.0, "terminal": 0.0, "total": 0.0}
+        }
+        
         if self.should_log_this_hand:
             self.hand_logs.append(f"\n=== Hand Start (Dealer: P{self.button}) ===")
             self.hand_logs.append(f"Stacks: P0={self.chips[0]:.1f}, P1={self.chips[1]:.1f}")
             self.hand_logs.append(f"Hole Cards P0: {[str(c) for c in self.game.players[0].hand]}")
             self.hand_logs.append(f"Hole Cards P1: {[str(c) for c in self.game.players[1].hand]}")
+        
+        # Initialize PotentialState for both players
+        from poker_rl.potential_state import PotentialState
+        total_chips = self.hand_start_stacks[0] + self.hand_start_stacks[1]
+        self.potential_states = {
+            0: PotentialState(self.game, 0, self.big_blind, self.hand_start_stacks[0]),
+            1: PotentialState(self.game, 1, self.big_blind, self.hand_start_stacks[1])
+        }
+        # Set total chips for normalization
+        self.potential_states[0].set_total_chips(total_chips)
+        self.potential_states[1].set_total_chips(total_chips)
         
         current_player = self.game.get_current_player()
         
@@ -192,12 +272,14 @@ class PokerMultiAgentEnv(MultiAgentEnv):
             
         action_idx = action_dict[agent_id]
         
+        # ===== DELTA-EQUITY: Calculate Potential BEFORE action =====
+        from poker_rl.potential_state import PotentialState
+        phi_before = self.potential_states[current_player].calculate_potential()
+        
         # Map and execute action
         engine_action = self._map_action(action_idx, current_player)
         
-        # Record for history (before processing, to get pot size before action?)
-        # Actually we want to record WHAT happened.
-        # If it's a bet/raise, we need the amount.
+        # Record for history
         pot_before = self.game.get_pot_size()
         street_before = self.game.street.value
         
@@ -205,10 +287,6 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         success, error = self.game.process_action(current_player, engine_action)
         
         if not success:
-            # This should be prevented by action masking, but if it happens,
-            # we might need to fallback or terminate.
-            # For now, treat as check/fold to prevent crash, or raise error.
-            # Ideally, mask prevents this.
             print(f"WARNING: Illegal action {action_idx} by {agent_id}: {error}")
             # Fallback to Check/Fold
             if self.game.current_bet > self.game.players[current_player].bet_this_round:
@@ -218,19 +296,6 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         
         # Record action in history
         bet_amount = engine_action.amount if engine_action.amount > 0 else 0
-        # If it was a call, amount is diff.
-        # But for history, we care about the "intent" or the "move".
-        # Let's record the abstract action index and the ratio.
-        
-        # Calculate actual bet amount for ratio
-        if engine_action.action_type in [ActionType.BET, ActionType.RAISE, ActionType.ALL_IN, ActionType.CALL]:
-             # For call, amount is implicit in engine but explicit in Action creation?
-             # Action.call(amount)
-             pass
-        
-        # Simplified history recording:
-        # We use the action_idx directly as it represents the "intent" (e.g. Bet 33%)
-        # For ratio, we calculate it.
         real_bet = 0.0
         if engine_action.amount > 0:
             real_bet = engine_action.amount
@@ -238,32 +303,82 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         self._record_action(action_idx, current_player, real_bet, pot_before, street_before)
         
         # Log action
-        # Log action
         action_str = f"Street: {street_before}, P{current_player} {engine_action} [Action: {action_idx}] (Pot: {pot_before:.1f})"
-        
-        if self.should_log_this_hand:
-            # Calculate features for the acting player to log context
-            from poker_rl.utils.equity_calculator import get_8_features
-            player_hand = self.game.players[current_player].hand
-            feats = get_8_features(player_hand, self.game.community_cards, street_before)
-            hs, ppot, npot, hidx = feats[:4]
-            action_str += f" | P{current_player}_Feat: [HS={hs:.2f} PPot={ppot:.2f} NPot={npot:.2f} HIdx={int(hidx)}]"
-            self.hand_logs.append(action_str)
         
         # Check if hand is over
         if self.game.is_hand_over:
+            if self.should_log_this_hand:
+                from poker_rl.utils.equity_calculator import get_8_features
+                player_hand = self.game.players[current_player].hand
+                feats = get_8_features(player_hand, self.game.community_cards, street_before)
+                hs, ppot, npot, hidx = feats[:4]
+                action_str += f" | P{current_player}_Feat: [HS={hs:.2f} PPot={ppot:.2f} NPot={npot:.2f} HIdx={int(hidx)}]"
+                action_str += f" | Phi_before={phi_before:.4f}"
+                self.hand_logs.append(action_str)
             return self._handle_hand_over()
+        
+        # ===== DELTA-EQUITY: Handle Fold (special case) =====
+        from poker_engine import ActionType
+        if engine_action.action_type == ActionType.FOLD:
+            # Fold: No intermediate reward (avoid penalty trap)
+            # Terminal reward will handle actual chip loss
+            intermediate_reward = 0.0
+            
+            if self.should_log_this_hand:
+                from poker_rl.utils.equity_calculator import get_8_features
+                player_hand = self.game.players[current_player].hand
+                feats = get_8_features(player_hand, self.game.community_cards, street_before)
+                hs, ppot, npot, hidx = feats[:4]
+                action_str += f" | P{current_player}_Feat: [HS={hs:.2f} PPot={ppot:.2f} NPot={npot:.2f} HIdx={int(hidx)}]"
+                action_str += f" | Phi_before={phi_before:.4f} | Reward=0.0000 (Fold)"
+                self.hand_logs.append(action_str)
+        else:
+            # ===== DELTA-EQUITY: Calculate Potential AFTER action =====
+            # Update PotentialState for current player
+            total_chips = self.hand_start_stacks[0] + self.hand_start_stacks[1]
+            self.potential_states[current_player] = PotentialState(
+                self.game, current_player, self.big_blind, self.hand_start_stacks[current_player]
+            )
+            self.potential_states[current_player].set_total_chips(total_chips)
+            phi_after = self.potential_states[current_player].calculate_potential()
+            
+            # Intermediate Reward = gamma*Phi(s') - Phi(s)
+            intermediate_reward = self.gamma * phi_after - phi_before
+            
+            # Track reward
+            self.hand_rewards[current_player]["intermediate"] += intermediate_reward
+            
+            if self.should_log_this_hand:
+                from poker_rl.utils.equity_calculator import get_8_features
+                player_hand = self.game.players[current_player].hand
+                feats = get_8_features(player_hand, self.game.community_cards, street_before)
+                hs, ppot, npot, hidx = feats[:4]
+                action_str += f" | P{current_player}_Feat: [HS={hs:.2f} PPot={ppot:.2f} NPot={npot:.2f} HIdx={int(hidx)}]"
+                action_str += f" | Phi: {phi_before:.4f}->{phi_after:.4f} | Reward={intermediate_reward:+.4f} (Cum={self.hand_rewards[current_player]['intermediate']:+.4f})"
+                self.hand_logs.append(action_str)
+        
+        # ===== Update opponent's PotentialState =====
+        # CRITICAL: Opponent's state also changes (pot size, etc.)
+        opponent = 1 - current_player
+        total_chips = self.hand_start_stacks[0] + self.hand_start_stacks[1]
+        self.potential_states[opponent] = PotentialState(
+            self.game, opponent, self.big_blind, self.hand_start_stacks[opponent]
+        )
+        self.potential_states[opponent].set_total_chips(total_chips)
         
         # Prepare next step
         next_player = self.game.get_current_player()
         
-        obs_dict = {f"player_{next_player}": ObservationBuilder.get_observation(self.game, next_player, self.action_history, self.hand_start_stacks)}
-        reward_dict = {f"player_{next_player}": 0.0} # No intermediate rewards
+        obs_dict = {f"player_{next_player}": ObservationBuilder.get_observation(
+            self.game, next_player, self.action_history, self.hand_start_stacks
+        )}
+        
+        # DELTA-EQUITY: Return intermediate reward instead of 0
+        reward_dict = {agent_id: float(intermediate_reward)}
+        
         terminated_dict = {"__all__": False}
         truncated_dict = {"__all__": False}
-        info_dict = {
-            f"player_{next_player}": {}
-        }
+        info_dict = {f"player_{next_player}": {}}
         
         return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
 
@@ -275,15 +390,42 @@ class PokerMultiAgentEnv(MultiAgentEnv):
         self.chips[0] = self.game.players[0].chips
         self.chips[1] = self.game.players[1].chips
         
-        # P0 Reward
-        stack_before_p0 = self.hand_start_stacks[0]
-        stack_after_p0 = self.chips[0]
-        chip_change = stack_after_p0 - stack_before_p0
-        bb_change = chip_change / self.big_blind
-        p0_reward = bb_change / 100.0
+        # ===== DELTA-EQUITY: Terminal Reward (Total Chips Normalization) =====
+        # Calculate chip changes
+        chip_change_p0 = self.chips[0] - self.hand_start_stacks[0]
+        chip_change_p1 = self.chips[1] - self.hand_start_stacks[1]
         
-        reward_dict["player_0"] = float(p0_reward)
-        reward_dict["player_1"] = float(-p0_reward) # Zero-sum
+        # Total Chips in Play (핸드 시작 시 총 칩)
+        total_chips = self.hand_start_stacks[0] + self.hand_start_stacks[1]
+        
+        # Normalize by Total Chips (Problem #2 SOLVED!)
+        # This ensures:
+        # - No Deep Stack Bias (모든 스택 깊이에서 동일한 스케일)
+        # - PPO-friendly range ([-0.5, +0.5])
+        # - Zero-Sum guaranteed (수학적으로 보장)
+        terminal_reward_p0 = chip_change_p0 / total_chips
+        terminal_reward_p1 = chip_change_p1 / total_chips
+        
+        # ===== Zero-Sum Verification (CRITICAL SAFETY CHECK) =====
+        # Should always be 0 (칩 보존 법칙)
+        # If this fails, there's a CRITICAL BUG in the poker engine!
+        zero_sum_error = abs(terminal_reward_p0 + terminal_reward_p1)
+        if zero_sum_error > 1e-5:  # Tolerance for floating point
+            raise ValueError(
+                f"CRITICAL: Zero-Sum Violation detected! "
+                f"P0={terminal_reward_p0:.6f}, P1={terminal_reward_p1:.6f}, "
+                f"Diff={zero_sum_error:.10f}, "
+                f"Chip changes: P0={chip_change_p0}, P1={chip_change_p1}"
+            )
+        
+        reward_dict["player_0"] = float(terminal_reward_p0)
+        reward_dict["player_1"] = float(terminal_reward_p1)
+        
+        # Track terminal rewards
+        self.hand_rewards[0]["terminal"] = terminal_reward_p0
+        self.hand_rewards[1]["terminal"] = terminal_reward_p1
+        self.hand_rewards[0]["total"] = self.hand_rewards[0]["intermediate"] + terminal_reward_p0
+        self.hand_rewards[1]["total"] = self.hand_rewards[1]["intermediate"] + terminal_reward_p1
         
         # Occasional logging
         # Use the flag decided at reset
@@ -318,7 +460,26 @@ class PokerMultiAgentEnv(MultiAgentEnv):
             self.hand_logs.append(f"P1({p1_hand}): HS={p1_hs:.2f} PPot={p1_ppot:.2f} NPot={p1_npot:.2f} HIdx={int(p1_hidx)} [{street_name}]")
             
             self.hand_logs.append(f"Community Cards: {[str(c) for c in self.game.community_cards]}")
-            self.hand_logs.append(f"Result: P0 {p0_reward:.4f}, P1 {-p0_reward:.4f}")
+            
+            # Original result line (chip change based)
+            chip_change_p0 = self.chips[0] - self.hand_start_stacks[0]
+            self.hand_logs.append(f"Result: P0 {chip_change_p0:.1f} chips, P1 {-chip_change_p0:.1f} chips")
+            
+            # ===== REWARD SUMMARY =====
+            self.hand_logs.append("--- Reward Summary ---")
+            self.hand_logs.append(
+                f"P0: Intermediate={self.hand_rewards[0]['intermediate']:.4f}, "
+                f"Terminal={self.hand_rewards[0]['terminal']:.4f}, "
+                f"TOTAL={self.hand_rewards[0]['total']:.4f}"
+            )
+            self.hand_logs.append(
+                f"P1: Intermediate={self.hand_rewards[1]['intermediate']:.4f}, "
+                f"Terminal={self.hand_rewards[1]['terminal']:.4f}, "
+                f"TOTAL={self.hand_rewards[1]['total']:.4f}"
+            )
+            self.hand_logs.append(
+                f"Zero-Sum Check: P0+P1={self.hand_rewards[0]['total'] + self.hand_rewards[1]['total']:.6f}"
+            )
             self.hand_logs.append("=== Hand End ===")
             # Use ' || ' separator to keep log as one atomic line in Ray output
             print(" || ".join(self.hand_logs))

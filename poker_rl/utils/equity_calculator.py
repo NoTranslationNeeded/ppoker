@@ -12,7 +12,6 @@ import json
 import os
 import random
 from typing import List, Tuple, Union
-from functools import lru_cache
 
 import sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -146,18 +145,18 @@ def get_hand_strength_postflop(hole_cards: List[Card], board: List[Card]) -> flo
     return min(1.0, max(0.0, score / 10_000_000.0))
 
 def calculate_ppot_npot(hole_cards: List[Card], board: List[Card], 
-                       num_opponent_samples: int = 50) -> Tuple[float, float]:
+                       num_opponent_samples: int = 10) -> Tuple[float, float]:
     """
     Calculate Positive and Negative Potential using Monte Carlo sampling
     
     Strategy:
-    - Sample 50 random opponent hands (uncertainty estimation)
+    - Sample 10 random opponent hands (uncertainty estimation)
     - For each opponent hand, simulate all 46 possible next cards (full enumeration)
     
     Args:
         hole_cards: 2 hole cards
         board: Community cards (3-4 cards, not 5)
-        num_opponent_samples: Number of opponent hands to sample (default 50)
+        num_opponent_samples: Number of opponent hands to sample (default 10)
     
     Returns:
         (ppot, npot) - both in range 0-1
@@ -357,14 +356,26 @@ def get_8_features(hole_cards: List[Card], board: List[Card],
         
         return features
 
-@lru_cache(maxsize=200000)
+
+# Cached version for performance
+from functools import lru_cache
+
+@lru_cache(maxsize=10000)
 def get_8_features_cached(hole_tuple, board_tuple, street):
     """
     Cached version of get_8_features to speed up training.
     Inputs must be tuples of (suit, rank) to be hashable.
+    
+    Args:
+        hole_tuple: Tuple of (suit, rank) for 2 hole cards
+        board_tuple: Tuple of (suit, rank) for board cards
+        street: Street name or int
+    
+    Returns:
+        List of 8 features (same as get_8_features)
     """
     # Convert tuples back to Card objects
-    hole_cards = [Card(suit, rank) for (suit, rank) in hole_tuple]
-    board = [Card(suit, rank) for (suit, rank) in board_tuple]
+    hole_cards = [Card(suit, rank) for suit, rank in hole_tuple]
+    board = [Card(suit, rank) for suit, rank in board_tuple]
     
     return get_8_features(hole_cards, board, street)
