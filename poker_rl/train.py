@@ -36,7 +36,11 @@ def train(experiment_name="epsilon", resume=False, stop_iters=1000):
     # Initialize Ray with runtime_env to suppress warnings in all actors
     if ray.is_initialized():
         ray.shutdown()
-    ray.init(runtime_env={"env_vars": {"PYTHONWARNINGS": "ignore"}})
+    ray.init(
+        runtime_env={"env_vars": {"PYTHONWARNINGS": "ignore"}},
+        _metrics_export_port=0,   # Disable metrics exporter (prevents connection errors)
+        include_dashboard=False,  # Disable dashboard (optional, also avoids metrics)
+    )
     
     # Suppress warnings in driver
     import warnings
@@ -62,13 +66,13 @@ def train(experiment_name="epsilon", resume=False, stop_iters=1000):
                 },
                 "max_seq_len": 40,  # Increased from 20 to handle long hands (Issue #9 solved)
             },
-            train_batch_size=32768,
+            train_batch_size=8192,  # Reduced from 32768 for faster iterations
             gamma=0.99,
             lr=3e-4,
             # PPO specific
             clip_param=0.2,
             lambda_=0.95,
-            entropy_coeff=0.03,
+            entropy_coeff=0.05,  # Increased from 0.03 to encourage exploration
             num_epochs=10,
         )
         .multi_agent(
@@ -80,6 +84,9 @@ def train(experiment_name="epsilon", resume=False, stop_iters=1000):
         .resources(num_gpus=1 if torch.cuda.is_available() else 0)
         .env_runners(num_env_runners=4, sample_timeout_s=300)
         .api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
+        .checkpointing(
+            export_native_model_files=True,  # Export PyTorch model files
+        )
     )
     
     # Run training
@@ -102,15 +109,48 @@ def train(experiment_name="epsilon", resume=False, stop_iters=1000):
             restart_errored=True
         )
     else:
-        # Checkpoint configuration
-        # Model is lightweight (~15 MB per checkpoint), so we can save frequently
-        from ray.train import CheckpointConfig
+        # Manual checkpoint trigger callback
+        from ray.tune.callback import Callback
+        import time
         
-        checkpoint_config = CheckpointConfig(
-            num_to_keep=10,              # Keep last 10 checkpoints (~150 MB total)
-            checkpoint_frequency=5,      # Save every 5 iterations (더 자주)
-            checkpoint_at_end=True,      # Always save at end
-        )
+        class ManualCheckpointCallback(Callback):
+            """
+            Monitor for SAVE_CHECKPOINT file. When created, save a checkpoint.
+            Usage: Create 'SAVE_CHECKPOINT' file in project root to trigger save.
+            """
+            def __init__(self, trigger_file="SAVE_CHECKPOINT"):
+                self.trigger_file = os.path.abspath(trigger_file)
+                self.last_check = time.time()
+                
+            def on_trial_result(self, iteration, trials, trial, result, **info):
+                # Check every 5 seconds
+                if time.time() - self.last_check < 5:
+                    return
+                    
+                self.last_check = time.time()
+                
+                if os.path.exists(self.trigger_file):
+                    print("\n" + "="*60)
+                    print("💾 Manual checkpoint trigger detected!")
+                    print(f"Saving checkpoint at iteration {result.get('training_iteration', 'unknown')}")
+                    
+                    # Actually save the checkpoint!
+                    try:
+                        checkpoint_path = trial.save()
+                        print(f"✅ Checkpoint saved successfully!")
+                        print(f"📂 Location: {checkpoint_path}")
+                    except Exception as e:
+                        print(f"❌ Failed to save checkpoint: {e}")
+                    
+                    print("="*60)
+                    
+                    # Remove trigger file
+                    try:
+                        os.remove(self.trigger_file)
+                    except:
+                        pass
+        
+        manual_checkpoint_callback = ManualCheckpointCallback()
         
         tuner = tune.Tuner(
             "PPO",
@@ -119,7 +159,12 @@ def train(experiment_name="epsilon", resume=False, stop_iters=1000):
                 stop={"training_iteration": stop_iters},
                 storage_path=storage_path,
                 name=experiment_name,
-                checkpoint_config=checkpoint_config,
+                callbacks=[manual_checkpoint_callback],  # Manual save via file trigger
+                checkpoint_config=tune.CheckpointConfig(
+                    checkpoint_frequency=1,   # Save checkpoint every iteration
+                    checkpoint_at_end=True,   # Save checkpoint at end of training
+                    num_to_keep=5,            # Keep last 5 checkpoints (CRITICAL: without this, checkpoints won't be saved!)
+                ),
             ),
         )
     

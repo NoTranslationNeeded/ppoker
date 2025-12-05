@@ -4,6 +4,7 @@ import sys
 import argparse
 import numpy as np
 import ray
+from ray import tune
 from ray.rllib.algorithms.algorithm import Algorithm
 from ray.rllib.models import ModelCatalog
 from ray.rllib.policy.policy import Policy
@@ -23,10 +24,14 @@ except ImportError:
 from poker_rl.utils.obs_builder import ObservationBuilder
 from poker_rl.models.masked_lstm import MaskedLSTM
 from poker_rl.models.masked_mlp import MaskedMLP
+from poker_rl.env import PokerMultiAgentEnv
 
 # Register custom models
 ModelCatalog.register_custom_model("masked_lstm", MaskedLSTM)
 ModelCatalog.register_custom_model("masked_mlp", MaskedMLP)
+
+# Register custom environment (CRITICAL for checkpoint loading)
+tune.register_env("poker_env", lambda config: PokerMultiAgentEnv(config))
 
 def get_action_name(action_idx, amount=0):
     if action_idx == 0: return "Fold"

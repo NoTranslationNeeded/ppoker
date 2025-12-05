@@ -31,6 +31,7 @@ class PotentialState:
             big_blind: Big blind size for normalization
             hand_start_stack: Starting stack for this hand (optional, will use current chips if None)
         """
+        self.game = game  # Store game reference for fold state checking
         self.player_id = player_id
         self.big_blind = big_blind
         
@@ -50,18 +51,17 @@ class PotentialState:
             self.invested_this_hand = 0.0
             self.hand_start_stack = player.chips
         
-        # Total Chips (will be set from env)
-        # For now, approximate as 2x this player's starting stack
-        # This will be properly set when called from env
-        self.total_chips = None
+        # Effective Stack (will be set from env)
+        # This is the strategic reference point for normalization
+        self.effective_stack = None
         
         # Equity caching
         self._cached_equity = None
         self._board_hash = None
     
-    def set_total_chips(self, total_chips: float):
-        """Set total chips for normalization"""
-        self.total_chips = total_chips
+    def set_effective_stack(self, effective_stack: float):
+        """Set effective stack for normalization"""
+        self.effective_stack = effective_stack
     
     def get_equity(self) -> float:
         """
@@ -104,22 +104,32 @@ class PotentialState:
         Returns:
             Potential value (normalized)
         """
+        # CRITICAL: Folded players have ZERO potential
+        # Dead hand cannot win chips, regardless of card strength
+        # This prevents "phantom potential" bug in terminal reward calculation
+        if self.game.players[self.player_id].is_folded():
+            return 0.0
+        
         # Get equity (cached if possible)
         equity = self.get_equity()
         
         # Expected Value = Equity × Pot
         expected_value = equity * self.pot
         
-        # Risk-adjusted = EV - Investment
-        risk_adjusted = expected_value - self.invested_this_hand
+        # Risk-adjusted = EV - Alpha*Investment
+        # Alpha weighting reduces betting penalty to escape Nit mode
+        # EXPERIMENT: Test α ∈ {0.3, 0.5, 1.0}
+        ALPHA = 0.5  # Recommended: 0.5 (50% penalty reduction)
+        risk_adjusted = expected_value - ALPHA * self.invested_this_hand
         
-        # Normalize by Total Chips (consistent with Terminal Reward)
-        # This ensures no Deep Stack Bias and PPO-friendly scale
-        if self.total_chips is not None and self.total_chips > 0:
-            normalized = risk_adjusted / self.total_chips
+        # Normalize by Effective Stack (consistent with Terminal Reward)
+        # This aligns intermediate rewards with strategic importance
+        # Range: approximately [-1, +1]
+        if self.effective_stack is not None and self.effective_stack > 0:
+            normalized = risk_adjusted / self.effective_stack
         else:
             # Fallback: use big_blind (should not happen in normal flow)
-            normalized = risk_adjusted / self.big_blind / 100.0
+            normalized = risk_adjusted / (self.big_blind * 100.0)
         
         return normalized
     
